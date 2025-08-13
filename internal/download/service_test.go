@@ -103,9 +103,19 @@ func TestGetAllTasks(t *testing.T) {
 		t.Fatalf("Failed to add second task: %v", err2)
 	}
 
-	tasks = service.GetAllTasks()
+	// Wait a bit for tasks to be processed and check multiple times
+	maxAttempts := 10
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		tasks = service.GetAllTasks()
+		if len(tasks) == 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	if len(tasks) != 2 {
-		t.Errorf("Expected 2 tasks, got %d", len(tasks))
+		t.Errorf("Expected 2 tasks, got %d after waiting", len(tasks))
+		return
 	}
 
 	// Verify task IDs are present

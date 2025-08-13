@@ -6,17 +6,20 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 )
 
 // OpenFileInManager opens the file in the system file manager and highlights it
 func OpenFileInManager(filePath string) error {
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return fmt.Errorf("file does not exist: %s", filePath)
+	// Try to find the file with fallback to similar names
+	foundPath, err := FindFileWithFallback(filePath)
+	if err != nil {
+		return fmt.Errorf("file does not exist: %v", err)
 	}
 
 	// Convert to absolute path
-	absPath, err := filepath.Abs(filePath)
+	absPath, err := filepath.Abs(foundPath)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -77,6 +80,51 @@ func CreateDirectoryIfNotExists(dirPath string) error {
 	return nil
 }
 
+// OpenFileWithDefaultApp opens the file with the default system application
+func OpenFileWithDefaultApp(filePath string) error {
+	// Try to find the file with fallback to similar names
+	foundPath, err := FindFileWithFallback(filePath)
+	if err != nil {
+		return fmt.Errorf("file does not exist: %v", err)
+	}
+
+	// Convert to absolute path
+	absPath, err := filepath.Abs(foundPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	switch runtime.GOOS {
+	case "darwin": // macOS
+		return openFileWithDefaultAppMacOS(absPath)
+	case "windows":
+		return openFileWithDefaultAppWindows(absPath)
+	case "linux":
+		return openFileWithDefaultAppLinux(absPath)
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+}
+
+// openFileWithDefaultAppMacOS opens file with default app on macOS
+func openFileWithDefaultAppMacOS(filePath string) error {
+	cmd := exec.Command("open", filePath)
+	return cmd.Run()
+}
+
+// openFileWithDefaultAppWindows opens file with default app on Windows
+func openFileWithDefaultAppWindows(filePath string) error {
+	cmd := exec.Command("cmd", "/c", "start", "", filePath)
+	return cmd.Run()
+}
+
+// openFileWithDefaultAppLinux opens file with default app on Linux
+func openFileWithDefaultAppLinux(filePath string) error {
+	// Try xdg-open first (most common)
+	cmd := exec.Command("xdg-open", filePath)
+	return cmd.Run()
+}
+
 // GetHomeDownloadsDir returns the standard Downloads directory for the user
 func GetHomeDownloadsDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
@@ -86,4 +134,222 @@ func GetHomeDownloadsDir() (string, error) {
 
 	downloadsDir := filepath.Join(homeDir, "Downloads")
 	return downloadsDir, nil
+}
+
+// FindFileWithFallback tries to find a file by its original path, and if not found,
+// searches for files with similar names in the same directory
+func FindFileWithFallback(filePath string) (string, error) {
+	// Validate input path
+	if filePath == "" {
+		return "", fmt.Errorf("file path is empty")
+	}
+
+	// Check if this looks like a URL instead of a file path
+	if strings.HasPrefix(filePath, "http") {
+		return "", fmt.Errorf("file path appears to be a URL: %s", filePath)
+	}
+
+	// Check if path contains proper separators
+	if !strings.Contains(filePath, "/") && !strings.Contains(filePath, "\\") {
+		return "", fmt.Errorf("file path does not contain path separators: %s", filePath)
+	}
+
+	// First, try the original path
+	if _, err := os.Stat(filePath); err == nil {
+		return filePath, nil
+	}
+
+	// If original path doesn't exist, try to find similar files
+	dir := filepath.Dir(filePath)
+	originalName := filepath.Base(filePath)
+	originalExt := filepath.Ext(originalName)
+	baseName := strings.TrimSuffix(originalName, originalExt)
+
+	// Read directory contents
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+
+	// Look for files with similar names
+	var candidates []string
+	var fallbackCandidates []string
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		entryName := entry.Name()
+		entryExt := filepath.Ext(entryName)
+		entryBase := strings.TrimSuffix(entryName, entryExt)
+
+		// Check if this file could be our target
+		if isSimilarFileName(entryBase, baseName) && entryExt == originalExt {
+			candidates = append(candidates, filepath.Join(dir, entryName))
+		}
+
+		// Fallback: if no similar names found, look for files with same extension
+		// that might be the downloaded file (e.g., video files with descriptive names)
+		// Only consider files with the exact same extension
+		if entryExt == originalExt && isLikelyDownloadedFile(entryName) {
+			fallbackCandidates = append(fallbackCandidates, filepath.Join(dir, entryName))
+		}
+	}
+
+	// If we found candidates with similar names, return the first one
+	if len(candidates) > 0 {
+		// Sort candidates to prefer exact matches first, then similar ones
+		sort.Strings(candidates)
+		return candidates[0], nil
+	}
+
+	// If no similar names found, try fallback candidates
+	if len(fallbackCandidates) > 0 {
+		// Sort by descriptive quality first, then by modification time
+		sort.Slice(fallbackCandidates, func(i, j int) bool {
+			fileNameI := filepath.Base(fallbackCandidates[i])
+			fileNameJ := filepath.Base(fallbackCandidates[j])
+
+			// Calculate descriptive score for each filename
+			scoreI := getDescriptiveScore(fileNameI)
+			scoreJ := getDescriptiveScore(fileNameJ)
+
+			// If scores are significantly different, prefer higher score
+			if scoreI != scoreJ {
+				return scoreI > scoreJ
+			}
+
+			// If scores are similar, prefer more recent file
+			infoI, _ := os.Stat(fallbackCandidates[i])
+			infoJ, _ := os.Stat(fallbackCandidates[j])
+			if infoI == nil || infoJ == nil {
+				return false
+			}
+			return infoI.ModTime().After(infoJ.ModTime())
+		})
+		return fallbackCandidates[0], nil
+	}
+
+	return "", fmt.Errorf("file not found: %s", filePath)
+}
+
+// isSimilarFileName checks if two file names are similar enough to be considered the same file
+func isSimilarFileName(name1, name2 string) bool {
+	// Remove common prefixes/suffixes that might be added by downloaders
+	clean1 := strings.TrimPrefix(strings.TrimSuffix(name1, " "), " ")
+	clean2 := strings.TrimPrefix(strings.TrimSuffix(name2, " "), " ")
+
+	// Check for exact match
+	if clean1 == clean2 {
+		return true
+	}
+
+	// Check for common variations
+	variations := []string{
+		"-" + clean1,
+		clean1 + "-",
+		"_" + clean1,
+		clean1 + "_",
+		" " + clean1,
+		clean1 + " ",
+	}
+
+	for _, variation := range variations {
+		if clean2 == variation {
+			return true
+		}
+	}
+
+	// Check if one is contained within the other (for truncated names)
+	if strings.Contains(clean1, clean2) || strings.Contains(clean2, clean1) {
+		// Only consider it similar if the difference is small
+		diff := len(clean1) - len(clean2)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff <= 10 { // Allow small differences
+			return true
+		}
+	}
+
+	return false
+}
+
+// isLikelyDownloadedFile checks if a filename looks like it could be a downloaded file
+func isLikelyDownloadedFile(filename string) bool {
+	// Skip temporary and metadata files
+	if strings.Contains(filename, ".part") || strings.Contains(filename, ".ytdl") {
+		return false
+	}
+
+	// Skip files that are too short (likely not descriptive names)
+	if len(filename) < 10 {
+		return false
+	}
+
+	// Look for patterns that suggest this is a downloaded video file
+	// - Contains spaces (descriptive names)
+	// - Contains underscores (descriptive names)
+	// - Contains hyphens (descriptive names)
+	// - Contains common video-related words
+	hasSpaces := strings.Contains(filename, " ")
+	hasUnderscores := strings.Contains(filename, "_")
+	hasHyphens := strings.Contains(filename, "-")
+
+	// Check for common video-related words
+	videoWords := []string{"video", "music", "song", "track", "mix", "playlist", "album", "artist", "band", "rammstein"}
+	hasVideoWords := false
+	for _, word := range videoWords {
+		if strings.Contains(strings.ToLower(filename), word) {
+			hasVideoWords = true
+			break
+		}
+	}
+
+	// File is likely downloaded if it has descriptive elements
+	return hasSpaces || hasUnderscores || hasHyphens || hasVideoWords
+}
+
+// getDescriptiveScore calculates a score indicating how descriptive a filename is
+func getDescriptiveScore(filename string) int {
+	score := 0
+
+	// Base score for length (longer names are usually more descriptive)
+	if len(filename) > 20 {
+		score += 3
+	} else if len(filename) > 15 {
+		score += 2
+	} else if len(filename) > 10 {
+		score += 1
+	}
+
+	// Bonus for spaces (descriptive names)
+	if strings.Contains(filename, " ") {
+		score += 2
+	}
+
+	// Bonus for underscores and hyphens
+	if strings.Contains(filename, "_") {
+		score += 1
+	}
+	if strings.Contains(filename, "-") {
+		score += 1
+	}
+
+	// Bonus for common video-related words
+	videoWords := []string{"video", "music", "song", "track", "mix", "playlist", "album", "artist", "band", "rammstein"}
+	for _, word := range videoWords {
+		if strings.Contains(strings.ToLower(filename), word) {
+			score += 2
+			break
+		}
+	}
+
+	// Penalty for files that look like timestamps or random strings
+	if strings.Contains(filename, "2025") || strings.Contains(filename, "2024") {
+		score -= 1
+	}
+
+	return score
 }

@@ -16,6 +16,9 @@ const (
 	// TaskStatusStopping means the task is in the process of stopping
 	TaskStatusStopping TaskStatus = "Stopping"
 
+	// TaskStatusPaused means the task was paused by user
+	TaskStatusPaused TaskStatus = "Paused"
+
 	// TaskStatusStopped means the task was stopped by user
 	TaskStatusStopped TaskStatus = "Stopped"
 

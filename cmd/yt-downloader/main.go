@@ -10,6 +10,10 @@ import (
 func main() {
 	// Create new Fyne app
 	myApp := app.NewWithID("com.romanitalian.yt-downloader")
+
+	// Apply compact theme
+	myApp.Settings().SetTheme(ui.NewCompactTheme())
+
 	myWindow := myApp.NewWindow("YT Downloader")
 	myWindow.Resize(fyne.NewSize(800, 600))
 

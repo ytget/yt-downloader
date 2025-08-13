@@ -10,9 +10,9 @@ type Localization struct {
 
 // Text keys for localization
 const (
+	// Actions
 	KeyAppTitle          = "app_title"
 	KeyDownload          = "download"
-	KeyStop              = "stop"
 	KeyOpen              = "open"
 	KeyCompress          = "compress"
 	KeySettings          = "settings"
@@ -29,13 +29,28 @@ const (
 	KeySettingsSaved     = "settings_saved"
 	KeyDownloadStarted   = "download_started"
 	KeyDownloadCompleted = "download_completed"
-	KeyErrorStoppingTask = "error_stopping_task"
+	KeyErrorStartingTask = "error_starting_task"
 	KeyErrorOpeningFile  = "error_opening_file"
-	KeyStoppingDownload  = "stopping_download"
+	KeyErrorCopyingPath  = "error_copying_path"
+	KeyErrorRemovingTask = "error_removing_task"
 	KeyInvalidURL        = "invalid_url"
 	KeyPleaseEnterURL    = "please_enter_url"
 	KeyAlreadyInQueue    = "already_in_queue"
 	KeyTaskAdded         = "task_added"
+	KeyPause             = "pause"
+	KeyContinue          = "continue"
+
+	// Notification panel
+	KeyParsingStarted = "parsing_started"
+	KeyParsingFailed  = "parsing_failed"
+	KeyPlaylistParsed = "playlist_parsed"
+
+	// Tooltips
+	KeyTooltipStartPause = "tooltip_start_pause"
+	KeyTooltipReveal     = "tooltip_reveal"
+	KeyTooltipOpen       = "tooltip_open"
+	KeyTooltipCopyPath   = "tooltip_copy_path"
+	KeyTooltipRemove     = "tooltip_remove"
 )
 
 // NewLocalization creates a new localization manager
@@ -100,10 +115,8 @@ func (l *Localization) initializeTexts() {
 	l.texts["en"] = map[string]string{
 		KeyAppTitle:          "YT Downloader",
 		KeyDownload:          "Download",
-		KeyStop:              "Stop",
 		KeyOpen:              "Open",
 		KeyCompress:          "Compress",
-		KeySettings:          "Settings",
 		KeyFile:              "File",
 		KeyLanguage:          "Language",
 		KeyDownloadDirectory: "Download Directory",
@@ -112,25 +125,36 @@ func (l *Localization) initializeTexts() {
 		KeyFilenameTemplate:  "Filename Template",
 		KeySave:              "Save",
 		KeyCancel:            "Cancel",
-		KeyBrowse:            "Browse",
 		KeyEnterURL:          "Enter YouTube URL (https://youtube.com/watch?v=...)",
 		KeySettingsSaved:     "Settings saved successfully!",
 		KeyDownloadStarted:   "Download started",
 		KeyDownloadCompleted: "Download completed",
-		KeyErrorStoppingTask: "Error stopping task",
+		KeyErrorStartingTask: "Error starting task",
 		KeyErrorOpeningFile:  "Error opening file",
-		KeyStoppingDownload:  "Stopping download...",
+		KeyErrorCopyingPath:  "Error copying path",
+		KeyErrorRemovingTask: "Error removing task",
 		KeyInvalidURL:        "Invalid URL",
 		KeyPleaseEnterURL:    "Please enter a URL",
 		KeyAlreadyInQueue:    "Already in queue",
 		KeyTaskAdded:         "Task added to queue",
+		KeyPause:             "Pause",
+		KeyContinue:          "Continue",
+		KeyParsingStarted:    "Starting playlist parsing in background...",
+		KeyParsingFailed:     "Failed to parse playlist",
+		KeyPlaylistParsed:    "Playlist parsed",
+
+		// Tooltips
+		KeyTooltipStartPause: "Start / Pause",
+		KeyTooltipReveal:     "Reveal in Finder/Explorer",
+		KeyTooltipOpen:       "Open with default app",
+		KeyTooltipCopyPath:   "Copy file path",
+		KeyTooltipRemove:     "Remove task",
 	}
 
 	// Russian texts
 	l.texts["ru"] = map[string]string{
 		KeyAppTitle:          "YT Загрузчик",
 		KeyDownload:          "Скачать",
-		KeyStop:              "Стоп",
 		KeyOpen:              "Открыть",
 		KeyCompress:          "Сжать",
 		KeySettings:          "Настройки",
@@ -142,25 +166,36 @@ func (l *Localization) initializeTexts() {
 		KeyFilenameTemplate:  "Шаблон имени файла",
 		KeySave:              "Сохранить",
 		KeyCancel:            "Отмена",
-		KeyBrowse:            "Обзор",
 		KeyEnterURL:          "Введите URL YouTube (https://youtube.com/watch?v=...)",
 		KeySettingsSaved:     "Настройки успешно сохранены!",
 		KeyDownloadStarted:   "Загрузка начата",
 		KeyDownloadCompleted: "Загрузка завершена",
-		KeyErrorStoppingTask: "Ошибка остановки задачи",
+		KeyErrorStartingTask: "Ошибка запуска задачи",
 		KeyErrorOpeningFile:  "Ошибка открытия файла",
-		KeyStoppingDownload:  "Остановка загрузки...",
+		KeyErrorCopyingPath:  "Ошибка копирования пути",
+		KeyErrorRemovingTask: "Ошибка удаления задачи",
 		KeyInvalidURL:        "Неверный URL",
 		KeyPleaseEnterURL:    "Пожалуйста, введите URL",
 		KeyAlreadyInQueue:    "Уже в очереди",
 		KeyTaskAdded:         "Задача добавлена в очередь",
+		KeyPause:             "Пауза",
+		KeyContinue:          "Продолжить",
+		KeyParsingStarted:    "Запуск парсинга плейлиста в фоне...",
+		KeyParsingFailed:     "Не удалось распарсить плейлист",
+		KeyPlaylistParsed:    "Плейлист распарсен",
+
+		// Tooltips
+		KeyTooltipStartPause: "Старт / Пауза",
+		KeyTooltipReveal:     "Показать в проводнике",
+		KeyTooltipOpen:       "Открыть файл",
+		KeyTooltipCopyPath:   "Копировать путь к файлу",
+		KeyTooltipRemove:     "Удалить задачу",
 	}
 
 	// Portuguese texts
 	l.texts["pt"] = map[string]string{
 		KeyAppTitle:          "YT Downloader",
 		KeyDownload:          "Baixar",
-		KeyStop:              "Parar",
 		KeyOpen:              "Abrir",
 		KeyCompress:          "Comprimir",
 		KeySettings:          "Configurações",
@@ -172,17 +207,29 @@ func (l *Localization) initializeTexts() {
 		KeyFilenameTemplate:  "Modelo de Nome de Arquivo",
 		KeySave:              "Salvar",
 		KeyCancel:            "Cancelar",
-		KeyBrowse:            "Navegar",
 		KeyEnterURL:          "Digite URL do YouTube (https://youtube.com/watch?v=...)",
 		KeySettingsSaved:     "Configurações salvas com sucesso!",
 		KeyDownloadStarted:   "Download iniciado",
 		KeyDownloadCompleted: "Download concluído",
-		KeyErrorStoppingTask: "Erro ao parar tarefa",
+		KeyErrorStartingTask: "Erro ao iniciar tarefa",
 		KeyErrorOpeningFile:  "Erro ao abrir arquivo",
-		KeyStoppingDownload:  "Parando download...",
+		KeyErrorCopyingPath:  "Erro ao copiar caminho",
+		KeyErrorRemovingTask: "Erro ao remover tarefa",
 		KeyInvalidURL:        "URL inválida",
 		KeyPleaseEnterURL:    "Por favor, digite uma URL",
 		KeyAlreadyInQueue:    "Já na fila",
 		KeyTaskAdded:         "Tarefa adicionada à fila",
+		KeyPause:             "Pausar",
+		KeyContinue:          "Continuar",
+		KeyParsingStarted:    "Iniciando análise da playlist em segundo plano...",
+		KeyParsingFailed:     "Falha ao analisar a playlist",
+		KeyPlaylistParsed:    "Playlist analisada",
+
+		// Tooltips
+		KeyTooltipStartPause: "Iniciar / Pausar",
+		KeyTooltipReveal:     "Mostrar no Finder/Explorer",
+		KeyTooltipOpen:       "Abrir arquivo",
+		KeyTooltipCopyPath:   "Copiar caminho do arquivo",
+		KeyTooltipRemove:     "Remover tarefa",
 	}
 }
