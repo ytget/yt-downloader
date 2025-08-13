@@ -16,19 +16,21 @@ const (
 
 // Settings keys for Fyne preferences
 const (
-	KeyDownloadDir      = "download_directory"
-	KeyMaxParallel      = "max_parallel_downloads"
-	KeyQualityPreset    = "quality_preset"
-	KeyFilenameTemplate = "filename_template"
-	KeyLanguage         = "app_language"
+	KeyDownloadDir        = "download_directory"
+	KeyMaxParallel        = "max_parallel_downloads"
+	KeyQualityPreset      = "quality_preset"
+	KeyFilenameTemplate   = "filename_template"
+	KeyLanguage           = "app_language"
+	KeyAutoRevealComplete = "auto_reveal_on_complete"
 )
 
 // Default values
 const (
-	DefaultMaxParallel      = 2
-	DefaultQualityPreset    = QualityMedium
-	DefaultFilenameTemplate = "%(title)s.%(ext)s"
-	DefaultLanguage         = "system"
+	DefaultMaxParallel        = 2
+	DefaultQualityPreset      = QualityMedium
+	DefaultFilenameTemplate   = "%(title)s.%(ext)s"
+	DefaultLanguage           = "system"
+	DefaultAutoRevealComplete = true
 )
 
 // Settings manages application configuration
@@ -133,6 +135,16 @@ func (s *Settings) SetLanguage(lang string) {
 // GetQualityPresetOptions returns available quality preset options
 func (s *Settings) GetQualityPresetOptions() []QualityPreset {
 	return []QualityPreset{QualityBest, QualityMedium, QualityAudio}
+}
+
+// GetAutoRevealOnComplete returns whether to auto-reveal completed downloads
+func (s *Settings) GetAutoRevealOnComplete() bool {
+	return s.app.Preferences().BoolWithFallback(KeyAutoRevealComplete, DefaultAutoRevealComplete)
+}
+
+// SetAutoRevealOnComplete sets whether to auto-reveal completed downloads
+func (s *Settings) SetAutoRevealOnComplete(autoReveal bool) {
+	s.app.Preferences().SetBool(KeyAutoRevealComplete, autoReveal)
 }
 
 // GetLanguageOptions returns available language options

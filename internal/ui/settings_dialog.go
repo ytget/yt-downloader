@@ -6,168 +6,107 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/romanitalian/yt-downloader/internal/config"
 )
 
-// SettingsDialog represents the settings configuration dialog
-type SettingsDialog struct {
-	settings *config.Settings
-	window   fyne.Window
-	dialog   *dialog.ConfirmDialog
-
-	// UI components
-	downloadDirEntry *widget.Entry
-	maxParallelEntry *widget.Entry
-	qualitySelect    *widget.Select
-	filenameEntry    *widget.Entry
-	languageSelect   *widget.Select
-}
-
-// NewSettingsDialog creates a new settings dialog
-func NewSettingsDialog(settings *config.Settings, window fyne.Window) *SettingsDialog {
-	sd := &SettingsDialog{
-		settings: settings,
-		window:   window,
-	}
-
-	sd.createUI()
-	return sd
-}
-
-// Show displays the settings dialog
-func (sd *SettingsDialog) Show() {
-	sd.loadCurrentSettings()
-	sd.dialog.Show()
-}
-
-// createUI creates the settings dialog UI
-func (sd *SettingsDialog) createUI() {
+// ShowSettingsDialog shows the application settings dialog
+func ShowSettingsDialog(window fyne.Window, settings *config.Settings, localization *Localization, onSettingsChanged func()) {
 	// Download directory selection
-	sd.downloadDirEntry = widget.NewEntry()
-	sd.downloadDirEntry.SetPlaceHolder("Download directory path")
+	downloadDirLabel := widget.NewLabel(localization.GetText(KeyDownloadDirectory) + ":")
+	downloadDirEntry := widget.NewEntry()
+	downloadDirEntry.SetText(settings.GetDownloadDirectory())
 
-	browseDirBtn := widget.NewButton("Browse", sd.onBrowseDirectory)
-	downloadDirRow := container.NewBorder(nil, nil, nil, browseDirBtn, sd.downloadDirEntry)
+	browseBtn := widget.NewButton(localization.GetText(KeyBrowse), func() {
+		dialog.ShowFolderOpen(func(folder fyne.ListableURI, err error) {
+			if err == nil && folder != nil {
+				downloadDirEntry.SetText(folder.Path())
+			}
+		}, window)
+	})
 
-	// Max parallel downloads
-	sd.maxParallelEntry = widget.NewEntry()
-	sd.maxParallelEntry.SetPlaceHolder("1-10")
+	downloadDirContainer := container.NewBorder(nil, nil, nil, browseBtn, downloadDirEntry)
 
 	// Quality preset selection
-	qualityOptions := []string{}
-	for _, preset := range sd.settings.GetQualityPresetOptions() {
-		qualityOptions = append(qualityOptions, string(preset))
-	}
-	sd.qualitySelect = widget.NewSelect(qualityOptions, nil)
+	qualityLabel := widget.NewLabel(localization.GetText(KeyQualityPreset) + ":")
+	qualitySelect := widget.NewSelect([]string{"Best", "Medium", "Audio Only"}, nil)
 
-	// Filename template
-	sd.filenameEntry = widget.NewEntry()
-	sd.filenameEntry.SetPlaceHolder("%(title)s.%(ext)s")
-
-	// Language selection
-	languageOptions := []string{}
-	languageLabels := sd.settings.GetLanguageOptions()
-	for code := range languageLabels {
-		languageOptions = append(languageOptions, code)
+	// Set current value
+	switch settings.GetQualityPreset() {
+	case config.QualityBest:
+		qualitySelect.SetSelected("Best")
+	case config.QualityMedium:
+		qualitySelect.SetSelected("Medium")
+	case config.QualityAudio:
+		qualitySelect.SetSelected("Audio Only")
 	}
-	sd.languageSelect = widget.NewSelect(languageOptions, nil)
-	// Custom formatting for language display
-	sd.languageSelect.PlaceHolder = "Select language"
+
+	// Max parallel downloads
+	parallelLabel := widget.NewLabel(localization.GetText(KeyMaxParallel) + ":")
+	parallelEntry := widget.NewEntry()
+	parallelEntry.SetText(strconv.Itoa(settings.GetMaxParallelDownloads()))
+	parallelEntry.Validator = func(s string) error {
+		if _, err := strconv.Atoi(s); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Auto reveal setting
+	autoRevealCheck := widget.NewCheck("Auto-reveal completed downloads", nil)
+	autoRevealCheck.SetChecked(settings.GetAutoRevealOnComplete())
 
 	// Create form
 	form := container.NewVBox(
-		widget.NewLabel("Download Settings"),
+		downloadDirLabel,
+		downloadDirContainer,
 		widget.NewSeparator(),
-
-		widget.NewLabel("Download Directory:"),
-		downloadDirRow,
-
-		widget.NewLabel("Max Parallel Downloads:"),
-		sd.maxParallelEntry,
-
-		widget.NewLabel("Quality Preset:"),
-		sd.qualitySelect,
-
-		widget.NewLabel("Filename Template:"),
-		sd.filenameEntry,
-
+		qualityLabel,
+		qualitySelect,
 		widget.NewSeparator(),
-		widget.NewLabel("Interface Settings"),
+		parallelLabel,
+		parallelEntry,
 		widget.NewSeparator(),
-
-		widget.NewLabel("Language:"),
-		sd.languageSelect,
+		autoRevealCheck,
 	)
 
-	// Create dialog with buttons
-	sd.dialog = dialog.NewCustomConfirm(
-		"Settings",
-		"Save",
-		"Cancel",
-		form,
-		sd.onSave,
-		sd.window,
-	)
+	// Save function
+	saveSettings := func() {
+		// Save download directory
+		settings.SetDownloadDirectory(downloadDirEntry.Text)
 
-	sd.dialog.Resize(fyne.NewSize(500, 400))
-}
-
-// loadCurrentSettings loads current settings into the UI
-func (sd *SettingsDialog) loadCurrentSettings() {
-	sd.downloadDirEntry.SetText(sd.settings.GetDownloadDirectory())
-	sd.maxParallelEntry.SetText(strconv.Itoa(sd.settings.GetMaxParallelDownloads()))
-	sd.qualitySelect.SetSelected(string(sd.settings.GetQualityPreset()))
-	sd.filenameEntry.SetText(sd.settings.GetFilenameTemplate())
-	sd.languageSelect.SetSelected(sd.settings.GetLanguage())
-}
-
-// onBrowseDirectory handles directory browsing
-func (sd *SettingsDialog) onBrowseDirectory() {
-	dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
-		if err != nil || uri == nil {
-			return
+		// Save quality preset
+		switch qualitySelect.Selected {
+		case "Best":
+			settings.SetQualityPreset(config.QualityBest)
+		case "Medium":
+			settings.SetQualityPreset(config.QualityMedium)
+		case "Audio Only":
+			settings.SetQualityPreset(config.QualityAudio)
 		}
-		sd.downloadDirEntry.SetText(uri.Path())
-	}, sd.window)
-}
 
-// onSave handles saving the settings
-func (sd *SettingsDialog) onSave(confirmed bool) {
-	if !confirmed {
-		return
-	}
+		// Save max parallel downloads
+		if parallel, err := strconv.Atoi(parallelEntry.Text); err == nil && parallel > 0 {
+			settings.SetMaxParallelDownloads(parallel)
+		}
 
-	// Validate and save download directory
-	downloadDir := sd.downloadDirEntry.Text
-	if downloadDir != "" {
-		sd.settings.SetDownloadDirectory(downloadDir)
-	}
+		// Save auto reveal setting
+		settings.SetAutoRevealOnComplete(autoRevealCheck.Checked)
 
-	// Validate and save max parallel downloads
-	maxParallelStr := sd.maxParallelEntry.Text
-	if maxParallelStr != "" {
-		if maxParallel, err := strconv.Atoi(maxParallelStr); err == nil {
-			sd.settings.SetMaxParallelDownloads(maxParallel)
+		// Notify parent about changes
+		if onSettingsChanged != nil {
+			onSettingsChanged()
 		}
 	}
 
-	// Save quality preset
-	if sd.qualitySelect.Selected != "" {
-		sd.settings.SetQualityPreset(config.QualityPreset(sd.qualitySelect.Selected))
-	}
-
-	// Save filename template
-	if sd.filenameEntry.Text != "" {
-		sd.settings.SetFilenameTemplate(sd.filenameEntry.Text)
-	}
-
-	// Save language
-	if sd.languageSelect.Selected != "" {
-		sd.settings.SetLanguage(sd.languageSelect.Selected)
-	}
-
-	// Show confirmation
-	dialog.ShowInformation("Settings", "Settings saved successfully!", sd.window)
+	// Show dialog
+	dlg := dialog.NewCustomConfirm(localization.GetText(KeySettings), localization.GetText(KeySave), localization.GetText(KeyCancel), form, func(confirmed bool) {
+		if confirmed {
+			saveSettings()
+		}
+	}, window)
+	dlg.Resize(fyne.NewSize(500, 400))
+	dlg.Show()
 }

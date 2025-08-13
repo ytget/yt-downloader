@@ -58,10 +58,32 @@ func (dt *DownloadTask) GetETAString() string {
 	return b.String()
 }
 
-// GetDisplayTitle returns title or URL if title is empty
+// GetDisplayTitle returns title, filename, or URL in order of preference
 func (dt *DownloadTask) GetDisplayTitle() string {
-	if dt.Title != "" {
+	// First priority: video title (non-URL)
+	if dt.Title != "" && !strings.HasPrefix(dt.Title, "http") {
 		return dt.Title
+	}
+
+	// Second priority: filename from OutputPath
+	if dt.OutputPath != "" {
+		// Extract just the filename without path (support both / and \ separators)
+		parts := strings.FieldsFunc(dt.OutputPath, func(r rune) bool {
+			return r == '/' || r == '\\'
+		})
+		if len(parts) > 0 {
+			filename := parts[len(parts)-1]
+			// Remove file extension for cleaner display
+			if idx := strings.LastIndex(filename, "."); idx > 0 {
+				filename = filename[:idx]
+			}
+			return filename
+		}
+	}
+
+	// Fallback: URL (preserve full URL for tests; UI can compact if needed)
+	if dt.URL == "" {
+		return ""
 	}
 	return dt.URL
 }

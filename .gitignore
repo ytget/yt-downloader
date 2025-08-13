@@ -27,6 +27,7 @@
 *.out
 go.work
 go.work.sum
+bin/
 
 # Dependency directories
 vendor/

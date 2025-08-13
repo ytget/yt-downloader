@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -17,16 +20,63 @@ import (
 	"github.com/romanitalian/yt-downloader/internal/platform"
 )
 
+// StatusFilter represents different task status filters
+// StatusFilter enumerates visible subsets of tasks in the UI.
+// String() returns human-friendly names for tabs.
+type StatusFilter int
+
+const (
+	FilterAll StatusFilter = iota
+	FilterDownloading
+	FilterPending
+	FilterCompleted
+	FilterErrors
+)
+
+// StatusFilterName returns the display name for a status filter
+// String returns a localized-like English label for the filter tab.
+func (sf StatusFilter) String() string {
+	switch sf {
+	case FilterAll:
+		return "All"
+	case FilterDownloading:
+		return "Downloading"
+	case FilterPending:
+		return "Pending"
+	case FilterCompleted:
+		return "Completed"
+	case FilterErrors:
+		return "Errors"
+	default:
+		return "Unknown"
+	}
+}
+
 // RootUI represents the main UI structure
 type RootUI struct {
-	window       fyne.Window
-	urlEntry     *widget.Entry
-	downloadBtn  *widget.Button
-	taskList     *widget.List
-	tasks        binding.UntypedList
-	downloadSvc  *download.Service
-	settings     *config.Settings
-	localization *Localization
+	window        fyne.Window
+	urlEntry      *widget.Entry
+	downloadBtn   *widget.Button
+	taskList      *widget.List
+	currentFilter StatusFilter
+	tasks         binding.UntypedList
+	filteredTasks []*model.DownloadTask
+	downloadSvc   *download.Service
+	settings      *config.Settings
+	localization  *Localization
+
+	// Playlist support
+	playlistGroup *PlaylistGroup
+	parserService *platform.YTDLPParserService
+
+	// UI update debouncing
+	lastUIUpdate  time.Time
+	uiUpdateMutex sync.Mutex
+
+	// Notification panel
+	notificationContainer *fyne.Container
+	notificationLabel     *widget.Label
+	notificationSpinner   *widget.ProgressBarInfinite
 }
 
 // NewRootUI creates and initializes the main UI
@@ -50,7 +100,13 @@ func NewRootUI(window fyne.Window, app fyne.App) *RootUI {
 		downloadSvc:  download.NewService(downloadsDir, settings.GetMaxParallelDownloads()),
 		settings:     settings,
 		localization: localization,
+
+		// Initialize playlist services
+		parserService: platform.NewYTDLPParserService(),
 	}
+
+	// Verify that all callbacks are properly initialized
+	log.Printf("RootUI initialized with download service: %v", ui.downloadSvc != nil)
 
 	// Set window title
 	window.SetTitle(localization.GetText(KeyAppTitle))
@@ -71,35 +127,75 @@ func (ui *RootUI) setupUI() {
 	ui.urlEntry = widget.NewEntry()
 	ui.urlEntry.SetPlaceHolder(ui.localization.GetText(KeyEnterURL))
 	ui.urlEntry.Validator = ui.validateURL
+	// Trigger download when user presses Enter in the URL field
+	ui.urlEntry.OnSubmitted = func(string) {
+		ui.onDownloadClick()
+	}
 
 	// Create download button
 	ui.downloadBtn = widget.NewButton(ui.localization.GetText(KeyDownload), ui.onDownloadClick)
 
-	// Create top panel
-	topPanel := container.NewBorder(nil, nil, nil, ui.downloadBtn, ui.urlEntry)
+	// Create settings button
+	settingsBtn := widget.NewButton(IconSettings, ui.onShowSettings)
+	settingsBtn.Importance = widget.LowImportance
 
-	// Create task list
+	// Create top panel (URL row)
+	topPanel := container.NewBorder(nil, nil, container.NewHBox(settingsBtn), ui.downloadBtn, ui.urlEntry)
+
+	// Create notification panel under URL input (hidden by default)
+	ui.notificationLabel = widget.NewLabel("")
+	ui.notificationLabel.Alignment = fyne.TextAlignLeading
+	ui.notificationSpinner = widget.NewProgressBarInfinite()
+	ui.notificationSpinner.Hide()
+	ui.notificationContainer = container.NewHBox(ui.notificationSpinner, container.NewPadded(ui.notificationLabel))
+	ui.notificationContainer.Hide()
+
+	// Combine URL row and notification panel at the top
+	topCombined := container.NewVBox(topPanel, ui.notificationContainer)
+
+	// Create task list (kept for individual video downloads)
 	ui.taskList = widget.NewList(
 		func() int {
-			return ui.tasks.Length()
+			return len(ui.filteredTasks)
 		},
 		func() fyne.CanvasObject { return ui.createTaskItem() },
-		func(id widget.ListItemID, obj fyne.CanvasObject) { ui.updateTaskItem(id, obj) },
+		func(id widget.ListItemID, obj fyne.CanvasObject) { ui.updateFilteredTaskItem(id, obj) },
 	)
 
-	// Create main layout
+	// Initialize with all tasks
+	ui.currentFilter = FilterAll
+
+	// Create playlist group
+	ui.playlistGroup = NewPlaylistGroup(ui.window, ui.localization)
+
+	// Set playlist callbacks
+	ui.playlistGroup.SetCallbacks(
+		ui.onPlaylistDownload,
+		ui.onPlaylistCancel,
+	)
+
+	// Set TaskRow callbacks for playlist videos
+	ui.playlistGroup.SetTaskRowCallbacks(
+		ui.onStartPauseTask,
+		ui.onRevealFile,
+		ui.onOpenFile,
+		ui.onCopyPath,
+		ui.onRemoveTask,
+	)
+
+	// Create main layout with unified list
 	content := container.NewBorder(
-		topPanel,    // top
-		nil,         // bottom
-		nil,         // left
-		nil,         // right
-		ui.taskList, // center
+		topCombined,                  // top
+		nil,                          // bottom
+		nil,                          // left
+		nil,                          // right
+		ui.playlistGroup.Container(), // center - unified playlist view
 	)
 
 	ui.window.SetContent(content)
 
-	// Add some sample tasks for testing
-	ui.addSampleTasks()
+	// UI setup completed
+	log.Printf("UI setup completed successfully")
 }
 
 // createMenu creates the application menu
@@ -162,12 +258,6 @@ func (ui *RootUI) refreshUITexts() {
 	ui.taskList.Refresh()
 }
 
-// onShowSettings shows the settings dialog
-func (ui *RootUI) onShowSettings() {
-	settingsDialog := NewSettingsDialog(ui.settings, ui.window)
-	settingsDialog.Show()
-}
-
 // validateURL validates the entered URL
 func (ui *RootUI) validateURL(input string) error {
 	if strings.TrimSpace(input) == "" {
@@ -190,17 +280,39 @@ func (ui *RootUI) validateURL(input string) error {
 func (ui *RootUI) onDownloadClick() {
 	urlText := strings.TrimSpace(ui.urlEntry.Text)
 	if urlText == "" {
+		// Also reflect in notification panel
+		ui.showNotification(ui.localization.GetText(KeyPleaseEnterURL), false)
 		widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyPleaseEnterURL)), ui.window.Canvas())
 		return
 	}
 
 	if err := ui.validateURL(urlText); err != nil {
+		// Also reflect in notification panel
+		ui.showNotification(ui.localization.GetText(KeyInvalidURL)+": "+err.Error(), false)
 		widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyInvalidURL)+": "+err.Error()), ui.window.Canvas())
 		return
 	}
 
+	// Clean URL from any special characters that might cause display issues
+	cleanURL := strings.ReplaceAll(urlText, "\n", "")
+	cleanURL = strings.ReplaceAll(cleanURL, "\r", "")
+	cleanURL = strings.ReplaceAll(cleanURL, "\t", " ")
+	cleanURL = strings.TrimSpace(cleanURL)
+
+	log.Printf("Processing URL: %s", cleanURL)
+
+	// Check if this is a playlist URL
+	if ui.isPlaylistURL(cleanURL) {
+		log.Printf("Detected playlist URL, processing as playlist")
+		ui.handlePlaylistURL(cleanURL)
+		return
+	}
+
+	// Regular video download
+	log.Printf("Adding download task for video URL: %s", cleanURL)
+
 	// Add task to download service
-	task, err := ui.downloadSvc.AddTask(urlText)
+	task, err := ui.downloadSvc.AddTask(cleanURL)
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyAlreadyInQueue)), ui.window.Canvas())
@@ -210,149 +322,423 @@ func (ui *RootUI) onDownloadClick() {
 		return
 	}
 
+	log.Printf("Task added successfully: ID=%s, Status=%s, OutputPath=%s",
+		task.ID, task.Status, task.OutputPath)
+
 	// Add to UI task list
 	ui.tasks.Append(task)
+
+	// Add to unified video list in PlaylistGroup
+	ui.playlistGroup.AddIndividualVideo(task)
+
+	// Update filtered tasks and refresh UI
+	ui.updateFilteredTasks()
+	ui.taskList.Refresh()
+
+	// Single refresh of the entire UI to ensure proper display
+	ui.window.Canvas().Refresh(ui.window.Content())
+
 	ui.urlEntry.SetText("")
 
 	widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyDownloadStarted)), ui.window.Canvas())
 }
 
+// showNotification displays a message in the notification panel under the URL input.
+// When spinning is true, a spinner is shown to indicate background activity.
+func (ui *RootUI) showNotification(message string, spinning bool) {
+	if ui.notificationLabel == nil || ui.notificationContainer == nil || ui.notificationSpinner == nil {
+		return
+	}
+	fyne.Do(func() {
+		ui.notificationLabel.SetText(message)
+		if spinning {
+			ui.notificationSpinner.Show()
+		} else {
+			ui.notificationSpinner.Hide()
+		}
+		ui.notificationContainer.Show()
+		ui.notificationContainer.Refresh()
+	})
+}
+
+// hideNotification hides the notification panel.
+func (ui *RootUI) hideNotification() {
+	if ui.notificationContainer == nil || ui.notificationSpinner == nil {
+		return
+	}
+	fyne.Do(func() {
+		ui.notificationSpinner.Hide()
+		ui.notificationContainer.Hide()
+	})
+}
+
+// onShowSettings shows the settings dialog
+func (ui *RootUI) onShowSettings() {
+	ShowSettingsDialog(ui.window, ui.settings, ui.localization, func() {
+		// Settings changed callback - could restart download service if needed
+		widget.ShowPopUp(widget.NewLabel("Settings saved"), ui.window.Canvas())
+	})
+}
+
 // createTaskItem creates a new task item widget
 func (ui *RootUI) createTaskItem() fyne.CanvasObject {
-	titleLabel := widget.NewLabel("Title")
-	statusLabel := widget.NewLabel("Status")
-	progressBar := widget.NewProgressBar()
-	progressLabel := widget.NewLabel("0%")
-	etaLabel := widget.NewLabel("—")
-	stopBtn := widget.NewButton(ui.localization.GetText(KeyStop), func() {
-		// Will be set in updateTaskItem
-	})
-	stopBtn.Hide() // Hidden by default
+	// Create placeholder task row - will be updated in updateTaskItem
+	dummyTask := &model.DownloadTask{
+		ID:     "placeholder",
+		Status: model.TaskStatusPending,
+		Title:  "Loading...",
+	}
 
-	openBtn := widget.NewButton(ui.localization.GetText(KeyOpen), func() {
-		// Will be set in updateTaskItem
-	})
-	openBtn.Hide() // Hidden by default
+	taskRow := NewTaskRow(dummyTask, ui.localization)
 
-	// Arrange widgets
-	topRow := container.NewHBox(titleLabel, widget.NewSeparator(), statusLabel, stopBtn, openBtn)
-	progressRow := container.NewBorder(nil, nil, progressLabel, etaLabel, progressBar)
+	// Set callbacks - these are initialized in the constructor
 
-	return container.NewVBox(topRow, progressRow)
+	taskRow.SetCallbacks(
+		ui.onStartPauseTask,
+		ui.onRevealFile,
+		ui.onOpenFile,
+		ui.onCopyPath,
+		ui.onRemoveTask,
+	)
+
+	return taskRow
 }
 
-// updateTaskItem updates a task item with current data
-func (ui *RootUI) updateTaskItem(id widget.ListItemID, item fyne.CanvasObject) {
-	taskData, err := ui.tasks.GetValue(id)
-	if err != nil {
+// updateFilteredTaskItem updates a filtered task item with current data
+func (ui *RootUI) updateFilteredTaskItem(id widget.ListItemID, item fyne.CanvasObject) {
+	if id >= len(ui.filteredTasks) {
 		return
 	}
 
-	task, ok := taskData.(*model.DownloadTask)
-	if !ok {
+	task := ui.filteredTasks[id]
+	if task == nil {
 		return
 	}
 
-	// Get container and its children
-	vbox := item.(*fyne.Container)
-	topRow := vbox.Objects[0].(*fyne.Container)
-	progressRow := vbox.Objects[1].(*fyne.Container)
+	// Cast to TaskRow and update
+	if taskRow, ok := item.(*TaskRow); ok {
+		// IMPORTANT: Re-set callbacks every time we update the task
+		// This ensures callbacks are properly connected to real tasks
 
-	// Update labels and controls
-	titleLabel := topRow.Objects[0].(*widget.Label)
-	statusLabel := topRow.Objects[2].(*widget.Label)
-	stopBtn := topRow.Objects[3].(*widget.Button)
-	openBtn := topRow.Objects[4].(*widget.Button)
+		// Set callbacks - these are initialized in the constructor
 
-	// For border container: left (progressLabel), center (progressBar), right (etaLabel)
-	var progressLabel *widget.Label
-	var progressBar *widget.ProgressBar
-	var etaLabel *widget.Label
+		taskRow.SetCallbacks(
+			ui.onStartPauseTask,
+			ui.onRevealFile,
+			ui.onOpenFile,
+			ui.onCopyPath,
+			ui.onRemoveTask,
+		)
 
-	// Find widgets by type in progressRow
-	for _, obj := range progressRow.Objects {
-		switch v := obj.(type) {
-		case *widget.Label:
-			if progressLabel == nil {
-				progressLabel = v // First label is progress
-			} else {
-				etaLabel = v // Second label is ETA
+		// Update the task data
+		taskRow.UpdateTask(task)
+
+		log.Printf("Updated TaskRow for task %s with callbacks, OutputPath: %s, Status: %s",
+			task.ID, task.OutputPath, task.Status)
+
+		// Force refresh of the task row to ensure proper display
+		taskRow.Refresh()
+	}
+}
+
+// onFilterChanged handles filter changes from status tabs
+func (ui *RootUI) onFilterChanged(filter StatusFilter) {
+	ui.currentFilter = filter
+	ui.updateFilteredTasks()
+	ui.taskList.Refresh()
+}
+
+// updateFilteredTasks updates the filtered tasks list based on current filter
+func (ui *RootUI) updateFilteredTasks() {
+	ui.filteredTasks = nil
+
+	// Get all tasks from binding
+	allTasks := ui.getAllTasks()
+
+	// Filter tasks based on current status filter
+	for _, task := range allTasks {
+		if ui.shouldShowTask(task) {
+			// Clean task data to prevent display issues
+			if task.URL != "" {
+				task.URL = strings.ReplaceAll(task.URL, "\n", "")
+				task.URL = strings.ReplaceAll(task.URL, "\r", "")
+				task.URL = strings.ReplaceAll(task.URL, "\t", " ")
+				task.URL = strings.TrimSpace(task.URL)
 			}
-		case *widget.ProgressBar:
-			progressBar = v
-		}
-	}
 
-	// Update UI elements - these should be safe in list callback, but wrap just in case
-	titleLabel.SetText(task.GetDisplayTitle())
-	statusLabel.SetText(task.Status.String())
-	progressLabel.SetText(fmt.Sprintf("%d%%", task.Percent))
-	etaLabel.SetText(task.GetETAString())
-	progressBar.SetValue(task.Progress)
+			if task.Title != "" {
+				task.Title = strings.ReplaceAll(task.Title, "\n", " ")
+				task.Title = strings.ReplaceAll(task.Title, "\r", " ")
+				task.Title = strings.ReplaceAll(task.Title, "\t", " ")
+				task.Title = strings.TrimSpace(task.Title)
+			}
 
-	// Configure stop button
-	if task.Status.IsActive() {
-		stopBtn.Show()
-		stopBtn.OnTapped = func() {
-			ui.onStopTask(task.ID)
+			ui.filteredTasks = append(ui.filteredTasks, task)
 		}
-		if task.Status == model.TaskStatusStopping {
-			stopBtn.Disable()
-		} else {
-			stopBtn.Enable()
-		}
-	} else {
-		stopBtn.Hide()
-	}
-
-	// Configure open button
-	if task.Status == model.TaskStatusCompleted && task.OutputPath != "" {
-		openBtn.Show()
-		openBtn.OnTapped = func() {
-			ui.onOpenFile(task.OutputPath)
-		}
-	} else {
-		openBtn.Hide()
-	}
-
-	// Color coding for status
-	switch task.Status {
-	case model.TaskStatusError:
-		statusLabel.Importance = widget.DangerImportance
-	case model.TaskStatusCompleted:
-		statusLabel.Importance = widget.SuccessImportance
-	default:
-		statusLabel.Importance = widget.MediumImportance
 	}
 }
 
-// onStopTask handles stopping a download task
-func (ui *RootUI) onStopTask(taskID string) {
-	err := ui.downloadSvc.StopTask(taskID)
-	if err != nil {
-		widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyErrorStoppingTask)+": "+err.Error()), ui.window.Canvas())
+// shouldShowTask returns whether a task should be shown based on current filter
+func (ui *RootUI) shouldShowTask(task *model.DownloadTask) bool {
+	switch ui.currentFilter {
+	case FilterAll:
+		return true
+	case FilterDownloading:
+		return task.Status == model.TaskStatusDownloading || task.Status == model.TaskStatusStarting
+	case FilterPending:
+		return task.Status == model.TaskStatusPending
+	case FilterCompleted:
+		return task.Status == model.TaskStatusCompleted
+	case FilterErrors:
+		return task.Status == model.TaskStatusError
+	default:
+		return true
+	}
+}
+
+// getAllTasks converts binding list to task slice
+func (ui *RootUI) getAllTasks() []*model.DownloadTask {
+	var tasks []*model.DownloadTask
+
+	length := ui.tasks.Length()
+	for i := 0; i < length; i++ {
+		item, err := ui.tasks.GetValue(i)
+		if err != nil {
+			continue
+		}
+
+		if task, ok := item.(*model.DownloadTask); ok {
+			// Clean task data to prevent display issues
+			if task.URL != "" {
+				task.URL = strings.ReplaceAll(task.URL, "\n", "")
+				task.URL = strings.ReplaceAll(task.URL, "\r", "")
+				task.URL = strings.ReplaceAll(task.URL, "\t", " ")
+				task.URL = strings.TrimSpace(task.URL)
+			}
+
+			if task.Title != "" {
+				task.Title = strings.ReplaceAll(task.Title, "\n", " ")
+				task.Title = strings.ReplaceAll(task.Title, "\r", " ")
+				task.Title = strings.ReplaceAll(task.Title, "\t", " ")
+				task.Title = strings.TrimSpace(task.Title)
+			}
+
+			tasks = append(tasks, task)
+		}
+	}
+
+	return tasks
+}
+
+// onStartPauseTask handles start/pause button click
+func (ui *RootUI) onStartPauseTask(taskID string) {
+	log.Printf("onStartPauseTask called for task %s", taskID)
+
+	task, exists := ui.downloadSvc.GetTask(taskID)
+	if !exists {
+		// Fallback to lookup by YouTube video ID for playlist rows
+		if t2, ok := ui.downloadSvc.GetTaskByVideoID(taskID); ok {
+			log.Printf("Mapped videoID %s to internal task %s", taskID, t2.ID)
+			task = t2
+			exists = true
+			taskID = t2.ID
+		} else {
+			log.Printf("Task %s not found", taskID)
+			widget.ShowPopUp(widget.NewLabel("Task not found"), ui.window.Canvas())
+			return
+		}
+	}
+
+	log.Printf("Task %s status: %s, OutputPath: %s", taskID, task.Status, task.OutputPath)
+
+	switch task.Status {
+	case model.TaskStatusPending, model.TaskStatusError, model.TaskStatusStopped:
+		// Start/Restart the task
+		log.Printf("Starting task %s", taskID)
+		err := ui.downloadSvc.RestartTask(taskID)
+		if err != nil {
+			log.Printf("Error starting task %s: %v", taskID, err)
+			widget.ShowPopUp(widget.NewLabel("Error starting task: "+err.Error()), ui.window.Canvas())
+		}
+	case model.TaskStatusPaused:
+		// Resume the paused task
+		log.Printf("Resuming task %s", taskID)
+		err := ui.downloadSvc.ResumeTask(taskID)
+		if err != nil {
+			log.Printf("Error resuming task %s: %v", taskID, err)
+			widget.ShowPopUp(widget.NewLabel("Error resuming task: "+err.Error()), ui.window.Canvas())
+		}
+	case model.TaskStatusDownloading, model.TaskStatusStarting:
+		// Pause the task
+		log.Printf("Pausing task %s", taskID)
+		err := ui.downloadSvc.PauseTask(taskID)
+		if err != nil {
+			log.Printf("Error pausing task %s: %v", taskID, err)
+			widget.ShowPopUp(widget.NewLabel("Error pausing task: "+err.Error()), ui.window.Canvas())
+		}
+		// No manual status change; wait for service update
+	default:
+		log.Printf("Cannot start/pause task %s in status: %s", taskID, task.Status)
+		widget.ShowPopUp(widget.NewLabel("Cannot start/pause task in current state"), ui.window.Canvas())
+	}
+}
+
+// onRevealFile handles revealing a file in the system file manager
+func (ui *RootUI) onRevealFile(filePath string) {
+	log.Printf("onRevealFile called for path: %s", filePath)
+
+	if filePath == "" {
+		log.Printf("Error: onRevealFile called with empty filePath")
+		widget.ShowPopUp(widget.NewLabel("Error: No file path provided"), ui.window.Canvas())
 		return
 	}
 
-	widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyStoppingDownload)), ui.window.Canvas())
-}
+	// Check if this is actually a file path, not a URL
+	if strings.HasPrefix(filePath, "http") {
+		log.Printf("Error: onRevealFile called with URL instead of file path: %s", filePath)
+		widget.ShowPopUp(widget.NewLabel("Error: Cannot reveal URL as file"), ui.window.Canvas())
+		return
+	}
 
-// onOpenFile handles opening a downloaded file in the system file manager
-func (ui *RootUI) onOpenFile(filePath string) {
 	err := platform.OpenFileInManager(filePath)
 	if err != nil {
+		log.Printf("Error revealing file %s: %v", filePath, err)
 		widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyErrorOpeningFile)+": "+err.Error()), ui.window.Canvas())
 		return
 	}
+
+	log.Printf("File revealed successfully: %s", filePath)
+}
+
+// onOpenFile handles opening a downloaded file with the default application
+func (ui *RootUI) onOpenFile(filePath string) {
+	log.Printf("onOpenFile called for path: %s", filePath)
+
+	if filePath == "" {
+		log.Printf("Error: onOpenFile called with empty filePath")
+		widget.ShowPopUp(widget.NewLabel("Error: No file path provided"), ui.window.Canvas())
+		return
+	}
+
+	// Check if this is actually a file path, not a URL
+	if strings.HasPrefix(filePath, "http") {
+		log.Printf("Error: onOpenFile called with URL instead of file path: %s", filePath)
+		widget.ShowPopUp(widget.NewLabel("Error: Cannot open URL as file"), ui.window.Canvas())
+		return
+	}
+
+	err := platform.OpenFileWithDefaultApp(filePath)
+	if err != nil {
+		log.Printf("Error opening file %s: %v", filePath, err)
+		widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyErrorOpeningFile)+": "+err.Error()), ui.window.Canvas())
+		return
+	}
+
+	log.Printf("File opened successfully: %s", filePath)
+}
+
+// onCopyPath handles copying file path to clipboard
+func (ui *RootUI) onCopyPath(filePath string) {
+	log.Printf("onCopyPath called for path: %s", filePath)
+
+	if filePath == "" {
+		log.Printf("Error: onCopyPath called with empty filePath")
+		widget.ShowPopUp(widget.NewLabel("Error: No file path provided"), ui.window.Canvas())
+		return
+	}
+
+	// Check if this is actually a file path, not a URL
+	if strings.HasPrefix(filePath, "http") {
+		log.Printf("Error: onCopyPath called with URL instead of file path: %s", filePath)
+		widget.ShowPopUp(widget.NewLabel("Error: Cannot copy URL as file path"), ui.window.Canvas())
+		return
+	}
+
+	clipboard := ui.window.Clipboard()
+	clipboard.SetContent(filePath)
+	widget.ShowPopUp(widget.NewLabel("Path copied to clipboard"), ui.window.Canvas())
+}
+
+// onRemoveTask handles removing a task from the list
+func (ui *RootUI) onRemoveTask(taskID string) {
+	log.Printf("onRemoveTask called for task %s", taskID)
+
+	err := ui.downloadSvc.RemoveTask(taskID)
+	if err != nil {
+		log.Printf("Error removing task %s: %v", taskID, err)
+		widget.ShowPopUp(widget.NewLabel("Error removing task: "+err.Error()), ui.window.Canvas())
+		return
+	}
+
+	log.Printf("Task %s removed from download service", taskID)
+
+	// Remove from UI binding list
+	length := ui.tasks.Length()
+	for i := 0; i < length; i++ {
+		item, err := ui.tasks.GetValue(i)
+		if err != nil {
+			continue
+		}
+
+		if task, ok := item.(*model.DownloadTask); ok && task.ID == taskID {
+			// Create new list without this item
+			newTasks := binding.NewUntypedList()
+			for j := 0; j < length; j++ {
+				if j != i {
+					item, err := ui.tasks.GetValue(j)
+					if err == nil {
+						newTasks.Append(item)
+					}
+				}
+			}
+			ui.tasks = newTasks
+			ui.updateFilteredTasks()
+			ui.taskList.Refresh()
+			log.Printf("Task %s removed from UI list", taskID)
+			break
+		}
+	}
+}
+
+// debouncedUIUpdate prevents excessive UI updates by limiting frequency
+func (ui *RootUI) debouncedUIUpdate() {
+	ui.uiUpdateMutex.Lock()
+	defer ui.uiUpdateMutex.Unlock()
+
+	now := time.Now()
+	if now.Sub(ui.lastUIUpdate) < UIUpdateDebounce {
+		return // Skip update if too soon
+	}
+
+	ui.lastUIUpdate = now
 }
 
 // onTaskUpdate handles task updates from the download service
 func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
+	// Clean task data to prevent display issues
+	if task.URL != "" {
+		task.URL = strings.ReplaceAll(task.URL, "\n", "")
+		task.URL = strings.ReplaceAll(task.URL, "\r", "")
+		task.URL = strings.ReplaceAll(task.URL, "\t", " ")
+		task.URL = strings.TrimSpace(task.URL)
+	}
+
+	if task.Title != "" {
+		task.Title = strings.ReplaceAll(task.Title, "\n", " ")
+		task.Title = strings.ReplaceAll(task.Title, "\r", " ")
+		task.Title = strings.ReplaceAll(task.Title, "\t", " ")
+		task.Title = strings.TrimSpace(task.Title)
+	}
+
+	log.Printf("STEP[onTaskUpdate] #1 received update: id=%s status=%s percent=%d progress=%.2f output=%s",
+		task.ID, task.Status, task.Percent, task.Progress, task.OutputPath)
+
 	// Check if task just completed for notification
 	wasCompleted := false
 
 	// Update task in the list
 	// Find and update the task in our binding list
+	log.Printf("STEP[onTaskUpdate] #2 update binding list entry for id=%s", task.ID)
 	length := ui.tasks.Length()
 	for i := 0; i < length; i++ {
 		item, err := ui.tasks.GetValue(i)
@@ -364,8 +750,11 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 			// Check if status changed to completed
 			if existingTask.Status != model.TaskStatusCompleted && task.Status == model.TaskStatusCompleted {
 				wasCompleted = true
+				log.Printf("Task %s completed, OutputPath: %s", task.ID, task.OutputPath)
 			}
 			ui.tasks.SetValue(i, task)
+			log.Printf("STEP[onTaskUpdate] #2.1 binding updated for id=%s (status=%s percent=%d progress=%.2f)",
+				task.ID, task.Status, task.Percent, task.Progress)
 			break
 		}
 	}
@@ -373,11 +762,73 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 	// Send notification for completed downloads
 	if wasCompleted {
 		ui.sendCompletionNotification(task)
+
+		// Auto-reveal if enabled
+		if ui.settings.GetAutoRevealOnComplete() && task.OutputPath != "" {
+			log.Printf("Auto-revealing completed task %s: %s", task.ID, task.OutputPath)
+			ui.onRevealFile(task.OutputPath)
+		} else if ui.settings.GetAutoRevealOnComplete() && task.OutputPath == "" {
+			log.Printf("Auto-reveal enabled but no OutputPath for completed task %s", task.ID)
+		}
 	}
+
+	// Update filtered tasks
+	log.Printf("STEP[onTaskUpdate] #3 update filtered tasks")
+	ui.updateFilteredTasks()
+
+	// Force direct update of TaskRow binding to avoid stale references
+	fyne.Do(func() {
+		length := ui.taskList.Length()
+		for i := 0; i < length; i++ {
+			ui.taskList.RefreshItem(i)
+		}
+	})
+
+	// Update PlaylistGroup if this task is displayed there
+	// Only update if values actually changed to prevent excessive UI updates
+	log.Printf("STEP[onTaskUpdate] #4 update playlist group: id=%s progress=%.2f status=%s", task.ID, task.Progress, task.Status)
+	ui.playlistGroup.UpdateVideoProgress(task.ID, task.Progress)
+	ui.playlistGroup.UpdateVideoStatus(task.ID, task.Status)
+	// Propagate runtime telemetry to playlist rows so speed/ETA are visible
+	ui.playlistGroup.UpdateVideoSpeed(task.ID, task.Speed, task.ETASec)
+	// Additionally try to match playlist items by URL, since playlist videos use
+	// YouTube video IDs while download tasks have generated IDs.
+	if task.URL != "" {
+		ui.playlistGroup.UpdateVideoProgressByURL(task.URL, task.Progress)
+		ui.playlistGroup.UpdateVideoStatusByURL(task.URL, task.Status)
+		ui.playlistGroup.UpdateVideoSpeedByURL(task.URL, task.Speed, task.ETASec)
+	}
+
+	// Only update OutputPath if it's not empty and different from current
+	if task.OutputPath != "" {
+		log.Printf("STEP[onTaskUpdate] #4.1 update playlist output path: id=%s path=%s size=%d", task.ID, task.OutputPath, task.FileSize)
+		ui.playlistGroup.UpdateVideoOutputPath(task.ID, task.OutputPath, task.FileSize)
+		if task.URL != "" {
+			ui.playlistGroup.UpdateVideoOutputPathByURL(task.URL, task.OutputPath, task.FileSize)
+		}
+	}
+
+	// Use debounced UI update to prevent excessive refreshes
+	log.Printf("STEP[onTaskUpdate] #5 debounced UI update")
+	ui.debouncedUIUpdate()
 
 	// Refresh the list to update UI - must be done in UI thread
 	fyne.Do(func() {
+		log.Printf("STEP[onTaskUpdate] #6 refresh list and specific item")
 		ui.taskList.Refresh()
+		// Also refresh individual task rows if possible
+		for i, filteredTask := range ui.filteredTasks {
+			if filteredTask.ID == task.ID {
+				// Force refresh of this specific item
+				ui.taskList.RefreshItem(i)
+				log.Printf("STEP[onTaskUpdate] #6.1 refreshed item index=%d id=%s", i, task.ID)
+				break
+			}
+		}
+
+		// Single refresh of the entire UI to ensure proper display
+		ui.window.Canvas().Refresh(ui.window.Content())
+		log.Printf("STEP[onTaskUpdate] #7 canvas refreshed")
 	})
 }
 
@@ -392,46 +843,187 @@ func (ui *RootUI) sendCompletionNotification(task *model.DownloadTask) {
 			Title:   title,
 			Content: message,
 		})
+
+		// Show in-app toast notification with action button
+		ui.showToastNotification(task)
 	}
 }
 
-// addSampleTasks adds some sample tasks for testing
-func (ui *RootUI) addSampleTasks() {
-	sampleTasks := []*model.DownloadTask{
-		{
-			ID:       "sample-1",
-			URL:      "https://youtube.com/watch?v=example1",
-			Title:    "Sample Video 1",
-			Status:   model.TaskStatusCompleted,
-			Progress: 1.0,
-			Percent:  100,
-		},
-		{
-			ID:       "sample-2",
-			URL:      "https://youtube.com/watch?v=example2",
-			Title:    "Sample Video 2 (Downloading)",
-			Status:   model.TaskStatusDownloading,
-			Progress: 0.45,
-			Percent:  45,
-			Speed:    "1.2MB/s",
-			ETASec:   123,
-		},
-		{
-			ID:        "sample-3",
-			URL:       "https://youtube.com/watch?v=example3",
-			Title:     "Sample Video 3 (Error)",
-			Status:    model.TaskStatusError,
-			LastError: "Network timeout",
-		},
-	}
+// showToastNotification shows an in-app toast notification with action buttons
+func (ui *RootUI) showToastNotification(task *model.DownloadTask) {
+	// Create notification content
+	titleLabel := widget.NewLabel(ui.localization.GetText(KeyDownloadCompleted))
+	titleLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	for _, task := range sampleTasks {
-		ui.tasks.Append(task)
-	}
+	messageLabel := widget.NewLabel(task.GetDisplayTitle())
+	messageLabel.Truncation = fyne.TextTruncateEllipsis
+
+	// Create action buttons
+	revealBtn := widget.NewButton("Reveal", func() {
+		if task.OutputPath != "" {
+			ui.onRevealFile(task.OutputPath)
+		} else {
+			log.Printf("Toast notification: Cannot reveal file for task %s - no OutputPath", task.ID)
+			widget.ShowPopUp(widget.NewLabel("File path not available"), ui.window.Canvas())
+		}
+	})
+	revealBtn.Importance = widget.HighImportance
+
+	openBtn := widget.NewButton(ui.localization.GetText(KeyOpen), func() {
+		if task.OutputPath != "" {
+			ui.onOpenFile(task.OutputPath)
+		} else {
+			log.Printf("Toast notification: Cannot open file for task %s - no OutputPath", task.ID)
+			widget.ShowPopUp(widget.NewLabel("File path not available"), ui.window.Canvas())
+		}
+	})
+	openBtn.Importance = widget.MediumImportance
+
+	// Create close button
+	var toastPopup *widget.PopUp
+	closeBtn := widget.NewButton(IconClose, func() {
+		if toastPopup != nil {
+			toastPopup.Hide()
+		}
+	})
+	closeBtn.Importance = widget.LowImportance
+
+	// Layout the toast content
+	header := container.NewBorder(nil, nil, titleLabel, closeBtn)
+	actions := container.NewHBox(revealBtn, openBtn)
+	content := container.NewVBox(
+		header,
+		messageLabel,
+		actions,
+	)
+
+	// Create and position the popup
+	toastPopup = widget.NewModalPopUp(content, ui.window.Canvas())
+
+	// Position in top-right corner
+	canvasSize := ui.window.Canvas().Size()
+	toastSize := fyne.NewSize(ToastWidth, ToastHeight)
+	toastPos := fyne.NewPos(canvasSize.Width-toastSize.Width-ToastMargin, ToastMargin)
+
+	toastPopup.Resize(toastSize)
+	toastPopup.Move(toastPos)
+	toastPopup.Show()
+
+	// Auto-hide after configured time
+	go func() {
+		time.Sleep(ToastAutoHide)
+		if toastPopup != nil {
+			toastPopup.Hide()
+		}
+	}()
 }
 
-// generateTaskID generates a unique task ID
-func generateTaskID() string {
-	// Simple ID generation for now
-	return fmt.Sprintf("task-%d", time.Now().UnixNano())
+// generateTaskID removed as unused
+
+// Playlist methods
+
+// onPlaylistDownload handles playlist download requests
+func (ui *RootUI) onPlaylistDownload(playlist *model.Playlist) {
+	// Add playlist to download service
+	err := ui.downloadSvc.AddPlaylist(playlist)
+	if err != nil {
+		log.Printf("Failed to add playlist to download service: %v", err)
+		return
+	}
+
+	// Start downloading the playlist
+	err = ui.downloadSvc.DownloadPlaylist(playlist)
+	if err != nil {
+		log.Printf("Failed to start playlist download: %v", err)
+		return
+	}
+
+	log.Printf("Started downloading playlist: %s with %d videos", playlist.Title, playlist.TotalVideos)
+}
+
+// onPlaylistCancel handles playlist cancellation requests
+func (ui *RootUI) onPlaylistCancel(playlist *model.Playlist) {
+	if playlist == nil {
+		return
+	}
+
+	// Cancel playlist download
+	err := ui.downloadSvc.CancelPlaylist(playlist.ID)
+	if err != nil {
+		log.Printf("Failed to cancel playlist: %v", err)
+		return
+	}
+
+	log.Printf("Cancelled playlist download: %s", playlist.Title)
+}
+
+// isPlaylistURL checks if the URL is a playlist URL
+func (ui *RootUI) isPlaylistURL(url string) bool {
+	return strings.Contains(url, PlaylistQueryParam)
+}
+
+// handlePlaylistURL handles playlist URL processing
+func (ui *RootUI) handlePlaylistURL(url string) {
+	// Clean URL from any special characters
+	cleanURL := strings.ReplaceAll(url, "\n", "")
+	cleanURL = strings.ReplaceAll(cleanURL, "\r", "")
+	cleanURL = strings.ReplaceAll(cleanURL, "\t", " ")
+	cleanURL = strings.TrimSpace(cleanURL)
+
+	log.Printf("Processing playlist URL: %s", cleanURL)
+
+	// Show notification: parsing started (without spinner)
+	fyne.Do(func() { ui.showNotification(ui.localization.GetText(KeyParsingStarted), false) })
+
+	// Parse playlist in background
+	go func() {
+		log.Printf("Starting playlist parsing in background...")
+		playlist, err := ui.parserService.ParsePlaylist(context.Background(), cleanURL)
+
+		// Update UI in main thread
+		fyne.Do(func() {
+			if err != nil {
+				log.Printf("Playlist parsing failed: %v", err)
+				ui.showNotification(ui.localization.GetText(KeyParsingFailed)+": "+err.Error(), false)
+				return
+			}
+
+			log.Printf("Playlist parsed successfully: %s with %d videos", playlist.Title, playlist.TotalVideos)
+			log.Printf("Playlist videos: %+v", playlist.Videos)
+
+			// Add playlist to playlist group
+			log.Printf("Adding playlist to UI...")
+			ui.playlistGroup.AddPlaylist(playlist)
+
+			// Clear URL entry
+			ui.urlEntry.SetText("")
+
+			// Show success message in notification panel
+			ui.showNotification(fmt.Sprintf("%s: %s (%d)", ui.localization.GetText(KeyPlaylistParsed), playlist.Title, playlist.TotalVideos), false)
+
+			log.Printf("Playlist added to UI successfully")
+
+			// Auto-start downloading the playlist
+			log.Printf("Auto-starting playlist download...")
+			go func() {
+				// Small delay to ensure UI is updated
+				time.Sleep(500 * time.Millisecond)
+
+				// Start downloading the playlist
+				err := ui.downloadSvc.AddPlaylist(playlist)
+				if err != nil {
+					log.Printf("Failed to add playlist to download service: %v", err)
+					return
+				}
+
+				err = ui.downloadSvc.DownloadPlaylist(playlist)
+				if err != nil {
+					log.Printf("Failed to start playlist download: %v", err)
+					return
+				}
+
+				log.Printf("Auto-started downloading playlist: %s with %d videos", playlist.Title, playlist.TotalVideos)
+			}()
+		})
+	}()
 }
