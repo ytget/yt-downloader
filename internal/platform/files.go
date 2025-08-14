@@ -10,6 +10,79 @@ import (
 	"strings"
 )
 
+// Operating system constants
+const (
+	OSDarwin  = "darwin"
+	OSWindows = "windows"
+	OSLinux   = "linux"
+)
+
+// File permissions
+const (
+	DefaultDirPermissions = 0755
+)
+
+// Command constants
+const (
+	OpenCommand     = "open"
+	ExplorerCommand = "explorer"
+	XDGOpenCommand  = "xdg-open"
+	CmdCommand      = "cmd"
+	StartCommand    = "start"
+)
+
+// Command parameters
+const (
+	MacOSSelectFlag    = "-R"
+	WindowsSelectParam = "/select,"
+	WindowsCmdFlag     = "/c"
+)
+
+// File manager names
+var (
+	LinuxFileManagers = []string{"nautilus", "dolphin", "thunar", "nemo", "pcmanfm"}
+)
+
+// File length thresholds
+const (
+	MinFileNameLength    = 10
+	MediumFileNameLength = 15
+	LongFileNameLength   = 20
+	MaxNameDifference    = 10
+)
+
+// Scoring system constants
+const (
+	ScoreForLongName     = 3
+	ScoreForMediumName   = 2
+	ScoreForShortName    = 1
+	ScoreForSpaces       = 2
+	ScoreForUnderscores  = 1
+	ScoreForHyphens      = 1
+	ScoreForVideoWords   = 2
+	PenaltyForTimestamps = 1
+)
+
+// Video-related words for file detection
+var (
+	VideoRelatedWords = []string{"video", "music", "song", "track", "mix", "playlist", "album", "artist", "band", "rammstein"}
+)
+
+// Timestamp years for penalty
+var (
+	TimestampYears = []string{"2025", "2024"}
+)
+
+// File extensions to skip
+var (
+	SkippedExtensions = []string{".part", ".ytdl"}
+)
+
+// Common file name variations
+var (
+	FileNameVariations = []string{"-", "_", " "}
+)
+
 // OpenFileInManager opens the file in the system file manager and highlights it
 func OpenFileInManager(filePath string) error {
 	// Try to find the file with fallback to similar names
@@ -25,11 +98,11 @@ func OpenFileInManager(filePath string) error {
 	}
 
 	switch runtime.GOOS {
-	case "darwin": // macOS
+	case OSDarwin: // macOS
 		return openFileInFinderMacOS(absPath)
-	case "windows":
+	case OSWindows:
 		return openFileInExplorerWindows(absPath)
-	case "linux":
+	case OSLinux:
 		return openFileInManagerLinux(absPath)
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
@@ -38,13 +111,13 @@ func OpenFileInManager(filePath string) error {
 
 // openFileInFinderMacOS opens file in Finder on macOS with selection
 func openFileInFinderMacOS(filePath string) error {
-	cmd := exec.Command("open", "-R", filePath)
+	cmd := exec.Command(OpenCommand, MacOSSelectFlag, filePath)
 	return cmd.Run()
 }
 
 // openFileInExplorerWindows opens file in Explorer on Windows with selection
 func openFileInExplorerWindows(filePath string) error {
-	cmd := exec.Command("explorer", "/select,", filePath)
+	cmd := exec.Command(ExplorerCommand, WindowsSelectParam, filePath)
 	return cmd.Run()
 }
 
@@ -54,15 +127,13 @@ func openFileInManagerLinux(filePath string) error {
 	dir := filepath.Dir(filePath)
 
 	// Try xdg-open first (most common)
-	cmd := exec.Command("xdg-open", dir)
+	cmd := exec.Command(XDGOpenCommand, dir)
 	if err := cmd.Run(); err == nil {
 		return nil
 	}
 
 	// Fallback to common file managers
-	fileManagers := []string{"nautilus", "dolphin", "thunar", "nemo", "pcmanfm"}
-
-	for _, fm := range fileManagers {
+	for _, fm := range LinuxFileManagers {
 		if _, err := exec.LookPath(fm); err == nil {
 			cmd := exec.Command(fm, dir)
 			return cmd.Run()
@@ -75,7 +146,7 @@ func openFileInManagerLinux(filePath string) error {
 // CreateDirectoryIfNotExists creates directory if it doesn't exist
 func CreateDirectoryIfNotExists(dirPath string) error {
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		return os.MkdirAll(dirPath, 0755)
+		return os.MkdirAll(dirPath, DefaultDirPermissions)
 	}
 	return nil
 }
@@ -95,11 +166,11 @@ func OpenFileWithDefaultApp(filePath string) error {
 	}
 
 	switch runtime.GOOS {
-	case "darwin": // macOS
+	case OSDarwin: // macOS
 		return openFileWithDefaultAppMacOS(absPath)
-	case "windows":
+	case OSWindows:
 		return openFileWithDefaultAppWindows(absPath)
-	case "linux":
+	case OSLinux:
 		return openFileWithDefaultAppLinux(absPath)
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
@@ -108,20 +179,20 @@ func OpenFileWithDefaultApp(filePath string) error {
 
 // openFileWithDefaultAppMacOS opens file with default app on macOS
 func openFileWithDefaultAppMacOS(filePath string) error {
-	cmd := exec.Command("open", filePath)
+	cmd := exec.Command(OpenCommand, filePath)
 	return cmd.Run()
 }
 
 // openFileWithDefaultAppWindows opens file with default app on Windows
 func openFileWithDefaultAppWindows(filePath string) error {
-	cmd := exec.Command("cmd", "/c", "start", "", filePath)
+	cmd := exec.Command(CmdCommand, WindowsCmdFlag, StartCommand, "", filePath)
 	return cmd.Run()
 }
 
 // openFileWithDefaultAppLinux opens file with default app on Linux
 func openFileWithDefaultAppLinux(filePath string) error {
 	// Try xdg-open first (most common)
-	cmd := exec.Command("xdg-open", filePath)
+	cmd := exec.Command(XDGOpenCommand, filePath)
 	return cmd.Run()
 }
 
@@ -252,7 +323,7 @@ func isSimilarFileName(name1, name2 string) bool {
 		"_" + clean1,
 		clean1 + "_",
 		" " + clean1,
-		clean1 + " ",
+		clean2 + " ",
 	}
 
 	for _, variation := range variations {
@@ -268,7 +339,7 @@ func isSimilarFileName(name1, name2 string) bool {
 		if diff < 0 {
 			diff = -diff
 		}
-		if diff <= 10 { // Allow small differences
+		if diff <= MaxNameDifference { // Allow small differences
 			return true
 		}
 	}
@@ -279,12 +350,14 @@ func isSimilarFileName(name1, name2 string) bool {
 // isLikelyDownloadedFile checks if a filename looks like it could be a downloaded file
 func isLikelyDownloadedFile(filename string) bool {
 	// Skip temporary and metadata files
-	if strings.Contains(filename, ".part") || strings.Contains(filename, ".ytdl") {
-		return false
+	for _, ext := range SkippedExtensions {
+		if strings.HasSuffix(filename, ext) {
+			return false
+		}
 	}
 
 	// Skip files that are too short (likely not descriptive names)
-	if len(filename) < 10 {
+	if len(filename) < MinFileNameLength {
 		return false
 	}
 
@@ -298,9 +371,8 @@ func isLikelyDownloadedFile(filename string) bool {
 	hasHyphens := strings.Contains(filename, "-")
 
 	// Check for common video-related words
-	videoWords := []string{"video", "music", "song", "track", "mix", "playlist", "album", "artist", "band", "rammstein"}
 	hasVideoWords := false
-	for _, word := range videoWords {
+	for _, word := range VideoRelatedWords {
 		if strings.Contains(strings.ToLower(filename), word) {
 			hasVideoWords = true
 			break
@@ -316,39 +388,40 @@ func getDescriptiveScore(filename string) int {
 	score := 0
 
 	// Base score for length (longer names are usually more descriptive)
-	if len(filename) > 20 {
-		score += 3
-	} else if len(filename) > 15 {
-		score += 2
-	} else if len(filename) > 10 {
-		score += 1
+	if len(filename) > LongFileNameLength {
+		score += ScoreForLongName
+	} else if len(filename) > MediumFileNameLength {
+		score += ScoreForMediumName
+	} else if len(filename) > MinFileNameLength {
+		score += ScoreForShortName
 	}
 
 	// Bonus for spaces (descriptive names)
 	if strings.Contains(filename, " ") {
-		score += 2
+		score += ScoreForSpaces
 	}
 
 	// Bonus for underscores and hyphens
 	if strings.Contains(filename, "_") {
-		score += 1
+		score += ScoreForUnderscores
 	}
 	if strings.Contains(filename, "-") {
-		score += 1
+		score += ScoreForHyphens
 	}
 
 	// Bonus for common video-related words
-	videoWords := []string{"video", "music", "song", "track", "mix", "playlist", "album", "artist", "band", "rammstein"}
-	for _, word := range videoWords {
+	for _, word := range VideoRelatedWords {
 		if strings.Contains(strings.ToLower(filename), word) {
-			score += 2
+			score += ScoreForVideoWords
 			break
 		}
 	}
 
 	// Penalty for files that look like timestamps or random strings
-	if strings.Contains(filename, "2025") || strings.Contains(filename, "2024") {
-		score -= 1
+	for _, year := range TimestampYears {
+		if strings.Contains(filename, year) {
+			score -= PenaltyForTimestamps
+		}
 	}
 
 	return score

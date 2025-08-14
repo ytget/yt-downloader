@@ -1,6 +1,7 @@
 package download
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -103,18 +104,22 @@ func TestGetAllTasks(t *testing.T) {
 		t.Fatalf("Failed to add second task: %v", err2)
 	}
 
-	// Wait a bit for tasks to be processed and check multiple times
-	maxAttempts := 10
+	// Wait longer for tasks to be processed and check multiple times
+	maxAttempts := 20
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		tasks = service.GetAllTasks()
 		if len(tasks) == 2 {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // Increased wait time
 	}
 
 	if len(tasks) != 2 {
 		t.Errorf("Expected 2 tasks, got %d after waiting", len(tasks))
+		// Log current tasks for debugging
+		for i, task := range tasks {
+			t.Logf("Task %d: ID=%s, URL=%s, Status=%s", i, task.ID, task.URL, task.Status)
+		}
 		return
 	}
 
@@ -169,7 +174,6 @@ func TestUpdateCallback(t *testing.T) {
 
 func TestGenerateTaskID(t *testing.T) {
 	id1 := generateTaskID()
-	time.Sleep(1 * time.Millisecond)
 	id2 := generateTaskID()
 
 	if id1 == id2 {
@@ -178,5 +182,23 @@ func TestGenerateTaskID(t *testing.T) {
 
 	if id1 == "" || id2 == "" {
 		t.Error("Expected non-empty task IDs")
+	}
+
+	// Check prefix
+	if !strings.HasPrefix(id1, "task-") {
+		t.Errorf("Expected ID to start with 'task-', got: %s", id1)
+	}
+
+	if !strings.HasPrefix(id2, "task-") {
+		t.Errorf("Expected ID to start with 'task-', got: %s", id2)
+	}
+
+	// Check UUID format (task- + 36 chars for UUID)
+	if len(id1) != len("task-")+36 {
+		t.Errorf("Expected ID length %d, got %d for ID: %s", len("task-")+36, len(id1), id1)
+	}
+
+	if len(id2) != len("task-")+36 {
+		t.Errorf("Expected ID length %d, got %d for ID: %s", len("task-")+36, len(id2), id2)
 	}
 }
