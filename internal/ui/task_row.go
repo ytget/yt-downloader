@@ -264,7 +264,7 @@ func (tr *TaskRow) updateFromTask() {
 		tr.task.Title = strings.TrimSpace(tr.task.Title)
 	}
 
-	log.Printf("STEP[TaskRow] updateFromTask: id=%s status=%s percent=%d progress=%.2f output=%s",
+	log.Printf("TaskRow updateFromTask: id=%s status=%s percent=%d progress=%.2f output=%s",
 		tr.task.ID, tr.task.Status, tr.task.Percent, tr.task.Progress, tr.task.OutputPath)
 
 	// Update labels
@@ -337,7 +337,7 @@ func (tr *TaskRow) updateFromTask() {
 	} else {
 		tr.progressLabel.SetText(fmt.Sprintf("%d%%", effectivePercent))
 	}
-	log.Printf("STEP[TaskRow] set progress label: id=%s percent=%d (status=%s)", tr.task.ID, effectivePercent, tr.task.Status)
+	log.Printf("TaskRow set progress label: id=%s percent=%d (status=%s)", tr.task.ID, effectivePercent, tr.task.Status)
 
 	// Update speed and ETA
 	speedEtaText := ""
@@ -511,7 +511,7 @@ func (r *taskRowRenderer) Refresh() {
 			}
 		}
 		r.taskRow.progressLabel.SetText(fmt.Sprintf(ProgressLabelFormat, effectivePercent))
-		log.Printf("STEP[TaskRowRenderer] refresh: id=%s percent=%d progress=%.2f status=%s",
+		log.Printf("TaskRowRenderer refresh: id=%s percent=%d progress=%.2f status=%s",
 			r.taskRow.task.ID, effectivePercent, r.taskRow.task.Progress, r.taskRow.task.Status)
 	}
 

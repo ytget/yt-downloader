@@ -730,7 +730,7 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 		task.Title = strings.TrimSpace(task.Title)
 	}
 
-	log.Printf("STEP[onTaskUpdate] #1 received update: id=%s status=%s percent=%d progress=%.2f output=%s",
+	log.Printf("Task update received: id=%s status=%s percent=%d progress=%.2f output=%s",
 		task.ID, task.Status, task.Percent, task.Progress, task.OutputPath)
 
 	// Check if task just completed for notification
@@ -738,7 +738,7 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 
 	// Update task in the list
 	// Find and update the task in our binding list
-	log.Printf("STEP[onTaskUpdate] #2 update binding list entry for id=%s", task.ID)
+	log.Printf("Updating binding list entry for id=%s", task.ID)
 	length := ui.tasks.Length()
 	for i := 0; i < length; i++ {
 		item, err := ui.tasks.GetValue(i)
@@ -753,7 +753,7 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 				log.Printf("Task %s completed, OutputPath: %s", task.ID, task.OutputPath)
 			}
 			ui.tasks.SetValue(i, task)
-			log.Printf("STEP[onTaskUpdate] #2.1 binding updated for id=%s (status=%s percent=%d progress=%.2f)",
+			log.Printf("Binding updated for id=%s (status=%s percent=%d progress=%.2f)",
 				task.ID, task.Status, task.Percent, task.Progress)
 			break
 		}
@@ -773,7 +773,7 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 	}
 
 	// Update filtered tasks
-	log.Printf("STEP[onTaskUpdate] #3 update filtered tasks")
+	log.Printf("Updating filtered tasks")
 	ui.updateFilteredTasks()
 
 	// Force direct update of TaskRow binding to avoid stale references
@@ -786,7 +786,7 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 
 	// Update PlaylistGroup if this task is displayed there
 	// Only update if values actually changed to prevent excessive UI updates
-	log.Printf("STEP[onTaskUpdate] #4 update playlist group: id=%s progress=%.2f status=%s", task.ID, task.Progress, task.Status)
+	log.Printf("Updating playlist group: id=%s progress=%.2f status=%s", task.ID, task.Progress, task.Status)
 	ui.playlistGroup.UpdateVideoProgress(task.ID, task.Progress)
 	ui.playlistGroup.UpdateVideoStatus(task.ID, task.Status)
 	// Propagate runtime telemetry to playlist rows so speed/ETA are visible
@@ -801,7 +801,7 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 
 	// Only update OutputPath if it's not empty and different from current
 	if task.OutputPath != "" {
-		log.Printf("STEP[onTaskUpdate] #4.1 update playlist output path: id=%s path=%s size=%d", task.ID, task.OutputPath, task.FileSize)
+		log.Printf("Updating playlist output path: id=%s path=%s size=%d", task.ID, task.OutputPath, task.FileSize)
 		ui.playlistGroup.UpdateVideoOutputPath(task.ID, task.OutputPath, task.FileSize)
 		if task.URL != "" {
 			ui.playlistGroup.UpdateVideoOutputPathByURL(task.URL, task.OutputPath, task.FileSize)
@@ -809,26 +809,26 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 	}
 
 	// Use debounced UI update to prevent excessive refreshes
-	log.Printf("STEP[onTaskUpdate] #5 debounced UI update")
+	log.Printf("Debounced UI update")
 	ui.debouncedUIUpdate()
 
 	// Refresh the list to update UI - must be done in UI thread
 	fyne.Do(func() {
-		log.Printf("STEP[onTaskUpdate] #6 refresh list and specific item")
+		log.Printf("Refreshing list and specific item")
 		ui.taskList.Refresh()
 		// Also refresh individual task rows if possible
 		for i, filteredTask := range ui.filteredTasks {
 			if filteredTask.ID == task.ID {
 				// Force refresh of this specific item
 				ui.taskList.RefreshItem(i)
-				log.Printf("STEP[onTaskUpdate] #6.1 refreshed item index=%d id=%s", i, task.ID)
+				log.Printf("Refreshed item index=%d id=%s", i, task.ID)
 				break
 			}
 		}
 
 		// Single refresh of the entire UI to ensure proper display
 		ui.window.Canvas().Refresh(ui.window.Content())
-		log.Printf("STEP[onTaskUpdate] #7 canvas refreshed")
+		log.Printf("Canvas refreshed")
 	})
 }
 
