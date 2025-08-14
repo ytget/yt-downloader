@@ -358,7 +358,7 @@ func (pg *PlaylistGroup) UpdateVideoStatus(videoID string, status interface{}) {
 
 // UpdateVideoProgress updates the progress of a specific video
 func (pg *PlaylistGroup) UpdateVideoProgress(videoID string, progress float64) {
-	log.Printf("STEP[PlaylistGroup] UpdateVideoProgress: id=%s progress=%.2f", videoID, progress)
+	log.Printf("PlaylistGroup UpdateVideoProgress: id=%s progress=%.2f", videoID, progress)
 	updated := false
 
 	// Update playlist videos
@@ -368,7 +368,7 @@ func (pg *PlaylistGroup) UpdateVideoProgress(videoID string, progress float64) {
 				video.Progress = progress
 				// Keep UI responsive by refreshing when value changes
 				updated = true
-				log.Printf("STEP[PlaylistGroup] playlist video updated: id=%s progress=%.2f", videoID, progress)
+				log.Printf("PlaylistGroup playlist video updated: id=%s progress=%.2f", videoID, progress)
 				break
 			}
 		}
@@ -381,7 +381,7 @@ func (pg *PlaylistGroup) UpdateVideoProgress(videoID string, progress float64) {
 			task.Progress = progress
 			task.Percent = int(progress * 100)
 			updated = true
-			log.Printf("STEP[PlaylistGroup] individual task updated: id=%s progress=%.2f percent=%d", videoID, progress, task.Percent)
+			log.Printf("PlaylistGroup individual task updated: id=%s progress=%.2f percent=%d", videoID, progress, task.Percent)
 			break
 		}
 	}
@@ -389,7 +389,7 @@ func (pg *PlaylistGroup) UpdateVideoProgress(videoID string, progress float64) {
 	// Only refresh UI if something actually changed
 	if updated {
 		fyne.Do(func() {
-			log.Printf("STEP[PlaylistGroup] list refreshed after progress update")
+			log.Printf("PlaylistGroup list refreshed after progress update")
 			pg.list.Refresh()
 		})
 	}
