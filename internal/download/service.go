@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lrstanley/go-ytdlp"
 	"github.com/ytget/yt-downloader/internal/model"
 )
@@ -659,9 +660,16 @@ func (s *Service) notifyUpdate(task *model.DownloadTask) {
 	}
 }
 
-// generateTaskID generates a unique task ID
+// generateTaskID generates a unique task ID using UUID v7 for better uniqueness and time ordering
 func generateTaskID() string {
-	return fmt.Sprintf("task-%d", time.Now().UnixNano())
+	// Use UUID v7 which includes timestamp and is naturally ordered
+	// This provides better uniqueness and allows for chronological sorting
+	id, err := uuid.NewV7()
+	if err != nil {
+		// Fallback to timestamp if UUID generation fails
+		return fmt.Sprintf("task-%d", time.Now().UnixNano())
+	}
+	return "task-" + id.String()
 }
 
 // extractVideoID extracts video ID from various YouTube URL formats

@@ -33,6 +33,25 @@ const (
 	DefaultAutoRevealComplete = true
 )
 
+// Validation limits
+const (
+	MinParallelDownloads = 1
+	MaxParallelDownloads = 10
+)
+
+// Fallback values
+const (
+	FallbackDownloadDir = "/tmp/downloads"
+)
+
+// Language codes
+const (
+	LanguageSystem = "system"
+	LanguageEN     = "en"
+	LanguageRU     = "ru"
+	LanguagePT     = "pt"
+)
+
 // Settings manages application configuration
 type Settings struct {
 	app fyne.App
@@ -50,7 +69,7 @@ func (s *Settings) GetDownloadDirectory() string {
 		// Use system default Downloads directory
 		defaultDir, err := platform.GetHomeDownloadsDir()
 		if err != nil {
-			defaultDir = "/tmp/downloads"
+			defaultDir = FallbackDownloadDir
 		}
 		s.SetDownloadDirectory(defaultDir)
 		return defaultDir
@@ -75,11 +94,11 @@ func (s *Settings) GetMaxParallelDownloads() int {
 
 // SetMaxParallelDownloads sets the maximum number of parallel downloads
 func (s *Settings) SetMaxParallelDownloads(count int) {
-	if count < 1 {
-		count = 1
+	if count < MinParallelDownloads {
+		count = MinParallelDownloads
 	}
-	if count > 10 {
-		count = 10
+	if count > MaxParallelDownloads {
+		count = MaxParallelDownloads
 	}
 	s.app.Preferences().SetInt(KeyMaxParallel, count)
 }
@@ -150,9 +169,9 @@ func (s *Settings) SetAutoRevealOnComplete(autoReveal bool) {
 // GetLanguageOptions returns available language options
 func (s *Settings) GetLanguageOptions() map[string]string {
 	return map[string]string{
-		"system": "System Default",
-		"en":     "English",
-		"ru":     "Русский",
-		"pt":     "Português",
+		LanguageSystem: "System Default",
+		LanguageEN:     "English",
+		LanguageRU:     "Русский",
+		LanguagePT:     "Português",
 	}
 }

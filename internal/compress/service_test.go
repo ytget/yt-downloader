@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ytget/yt-downloader/internal/model"
 )
@@ -187,19 +186,163 @@ func TestUpdateCallback(t *testing.T) {
 }
 
 func TestGenerateTaskID(t *testing.T) {
-	id1 := generateTaskID()
-	time.Sleep(1 * time.Millisecond) // Ensure different timestamp
-	id2 := generateTaskID()
+	// Test multiple ID generation to ensure uniqueness
+	ids := make(map[string]bool)
+	const numIDs = 1000
 
-	if id1 == id2 {
-		t.Error("Expected different task IDs")
+	for i := 0; i < numIDs; i++ {
+		id := generateTaskID()
+
+		// Check prefix
+		if !strings.HasPrefix(id, "compress-") {
+			t.Errorf("Expected ID to start with 'compress-', got: %s", id)
+		}
+
+		// Check UUID format (compress- + 36 chars for UUID)
+		if len(id) != len("compress-")+36 {
+			t.Errorf("Expected ID length %d, got %d for ID: %s", len("compress-")+36, len(id), id)
+		}
+
+		// Check UUID part format (8-4-4-4-12)
+		uuidPart := strings.TrimPrefix(id, "compress-")
+		if !isValidUUID(uuidPart) {
+			t.Errorf("Invalid UUID format in ID: %s", id)
+		}
+
+		// Check uniqueness
+		if ids[id] {
+			t.Errorf("Duplicate ID generated: %s", id)
+		}
+		ids[id] = true
 	}
 
-	if !strings.HasPrefix(id1, "compress-") {
-		t.Errorf("Expected ID to start with 'compress-', got: %s", id1)
+	// Verify we got the expected number of unique IDs
+	if len(ids) != numIDs {
+		t.Errorf("Expected %d unique IDs, got %d", numIDs, len(ids))
+	}
+}
+
+// isValidUUID checks if a string is a valid UUID v4 format
+func isValidUUID(uuid string) bool {
+	if len(uuid) != 36 {
+		return false
 	}
 
-	if !strings.HasPrefix(id2, "compress-") {
-		t.Errorf("Expected ID to start with 'compress-', got: %s", id2)
+	// Check UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	parts := strings.Split(uuid, "-")
+	if len(parts) != 5 {
+		return false
 	}
+
+	if len(parts[0]) != 8 || len(parts[1]) != 4 || len(parts[2]) != 4 || len(parts[3]) != 4 || len(parts[4]) != 12 {
+		return false
+	}
+
+	// Check that all parts are hexadecimal
+	for _, part := range parts {
+		for _, char := range part {
+			if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func TestGenerateTaskID_Uniqueness(t *testing.T) {
+	// Test that IDs are unique even when generated rapidly
+	const numIDs = 100
+	ids := make(map[string]bool)
+
+	for i := 0; i < numIDs; i++ {
+		id := generateTaskID()
+		if ids[id] {
+			t.Errorf("Duplicate ID generated: %s", id)
+		}
+		ids[id] = true
+	}
+}
+
+func TestGenerateTaskID_Format(t *testing.T) {
+	id := generateTaskID()
+
+	// Check prefix
+	if !strings.HasPrefix(id, "compress-") {
+		t.Errorf("Expected ID to start with 'compress-', got: %s", id)
+	}
+
+	// Check total length
+	expectedLength := len("compress-") + 36 // UUID length
+	if len(id) != expectedLength {
+		t.Errorf("Expected ID length %d, got %d", expectedLength, len(id))
+	}
+
+	// Check UUID part
+	uuidPart := strings.TrimPrefix(id, "compress-")
+	if !isValidUUID(uuidPart) {
+		t.Errorf("Invalid UUID format: %s", uuidPart)
+	}
+}
+
+func TestGenerateTaskID_ConsistentPrefix(t *testing.T) {
+	// Test that all generated IDs have the same prefix
+	const numIDs = 100
+	expectedPrefix := "compress-"
+
+	for i := 0; i < numIDs; i++ {
+		id := generateTaskID()
+		if !strings.HasPrefix(id, expectedPrefix) {
+			t.Errorf("ID %d: Expected prefix '%s', got: %s", i, expectedPrefix, id)
+		}
+	}
+}
+
+func TestGenerateTaskID_UUIDVersion(t *testing.T) {
+	// Test that generated UUIDs are valid and follow proper format
+	id := generateTaskID()
+	uuidPart := strings.TrimPrefix(id, "compress-")
+
+	// UUID v7 has specific version and variant bits
+	// Version 7: first 4 bits of time_hi_and_version should be 0111 (7)
+	// Variant: first 2 bits of clock_seq_hi_and_reserved should be 10
+
+	// Extract version bits (position 14-15 in hex string)
+	if len(uuidPart) < 15 {
+		t.Fatalf("UUID too short: %s", uuidPart)
+	}
+
+	// Check version (7th character should be '7')
+	if uuidPart[14] != '7' {
+		t.Errorf("Expected UUID v7, version character should be '7', got: %c", uuidPart[14])
+	}
+
+	// Check variant (9th character should be '8', '9', 'a', or 'b')
+	variantChar := uuidPart[19]
+	if variantChar != '8' && variantChar != '9' && variantChar != 'a' && variantChar != 'b' {
+		t.Errorf("Expected valid UUID variant, got: %c", variantChar)
+	}
+}
+
+func TestGenerateTaskID_StressTest(t *testing.T) {
+	// Stress test to ensure no collisions under high load
+	const numIDs = 10000
+	ids := make(map[string]bool)
+
+	t.Logf("Generating %d unique IDs...", numIDs)
+
+	for i := 0; i < numIDs; i++ {
+		id := generateTaskID()
+		if ids[id] {
+			t.Errorf("Collision detected at iteration %d: %s", i, id)
+		}
+		ids[id] = true
+
+		// Progress indicator for long tests
+		if i%1000 == 0 {
+			t.Logf("Generated %d IDs...", i)
+		}
+	}
+
+	t.Logf("Successfully generated %d unique IDs", len(ids))
 }

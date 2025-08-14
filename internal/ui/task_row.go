@@ -14,18 +14,36 @@ import (
 	"github.com/ytget/yt-downloader/internal/model"
 )
 
+// File size formatting constants
+const (
+	FileSizeUnit  = 1024
+	FileSizeUnits = "KMGTPE"
+)
+
+// Progress calculation constants
+const (
+	MaxProgressPercent  = 100
+	MinProgressPercent  = 1
+	RoundingCoefficient = 0.5
+)
+
+// Dialog size constants
+const (
+	TaskRowDialogWidth  = 500
+	TaskRowDialogHeight = 400
+)
+
 // formatFileSize formats file size in bytes to human readable format
 func formatFileSize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
+	if bytes < FileSizeUnit {
 		return fmt.Sprintf("%d B", bytes)
 	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
+	div, exp := int64(FileSizeUnit), 0
+	for n := bytes / FileSizeUnit; n >= FileSizeUnit; n /= FileSizeUnit {
+		div *= FileSizeUnit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), FileSizeUnits[exp])
 }
 
 // TaskRow represents a compact task row widget
@@ -315,22 +333,22 @@ func (tr *TaskRow) updateFromTask() {
 	effectivePercent := tr.task.Percent
 	if tr.task.Status == model.TaskStatusCompleted {
 		// Do not show redundant 100% label when completed; keep bar filled.
-		effectivePercent = 100
+		effectivePercent = MaxProgressPercent
 	} else if effectivePercent <= 0 && tr.task.Progress > 0 {
-		effectivePercent = int(tr.task.Progress * 100)
+		effectivePercent = int(tr.task.Progress * MaxProgressPercent)
 	}
 	// Если прогресс дробный (например 0.69), переводим в проценты округлением вниз, но не позволяем оставаться 0 при progress>0
 	if effectivePercent == 0 && tr.task.Progress > 0 {
-		effectivePercent = int(tr.task.Progress*100 + 0.5)
+		effectivePercent = int(tr.task.Progress*MaxProgressPercent + RoundingCoefficient)
 		if effectivePercent == 0 {
-			effectivePercent = 1
+			effectivePercent = MinProgressPercent
 		}
 	}
 	if effectivePercent < 0 {
 		effectivePercent = 0
 	}
-	if effectivePercent > 100 {
-		effectivePercent = 100
+	if effectivePercent > MaxProgressPercent {
+		effectivePercent = MaxProgressPercent
 	}
 	if tr.task.Status == model.TaskStatusCompleted {
 		tr.progressLabel.SetText("")
@@ -494,20 +512,20 @@ func (r *taskRowRenderer) Refresh() {
 		// Also update textual progress label to reflect current percent
 		effectivePercent := r.taskRow.task.Percent
 		if r.taskRow.task.Status == model.TaskStatusCompleted {
-			effectivePercent = 100
+			effectivePercent = MaxProgressPercent
 		} else if effectivePercent <= 0 && r.taskRow.task.Progress > 0 {
-			effectivePercent = int(r.taskRow.task.Progress * 100)
+			effectivePercent = int(r.taskRow.task.Progress * MaxProgressPercent)
 		}
 		if effectivePercent < 0 {
 			effectivePercent = 0
 		}
-		if effectivePercent > 100 {
-			effectivePercent = 100
+		if effectivePercent > MaxProgressPercent {
+			effectivePercent = MaxProgressPercent
 		}
 		if effectivePercent == 0 && r.taskRow.task.Progress > 0 {
-			effectivePercent = int(r.taskRow.task.Progress*100 + 0.5)
+			effectivePercent = int(r.taskRow.task.Progress*MaxProgressPercent + RoundingCoefficient)
 			if effectivePercent == 0 {
-				effectivePercent = 1
+				effectivePercent = MinProgressPercent
 			}
 		}
 		r.taskRow.progressLabel.SetText(fmt.Sprintf(ProgressLabelFormat, effectivePercent))
