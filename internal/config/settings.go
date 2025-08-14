@@ -2,7 +2,7 @@ package config
 
 import (
 	"fyne.io/fyne/v2"
-	"github.com/romanitalian/yt-downloader/internal/platform"
+	"github.com/ytget/yt-downloader/internal/platform"
 )
 
 // Quality presets for downloads

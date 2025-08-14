@@ -6,7 +6,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
-	"github.com/romanitalian/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/model"
 )
 
 // PlaylistGroup represents a group of playlists with unified display

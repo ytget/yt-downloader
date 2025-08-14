@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/lrstanley/go-ytdlp"
-	"github.com/romanitalian/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/model"
 )
 
 // min returns the minimum of two integers
