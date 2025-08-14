@@ -3,9 +3,14 @@ SHELL:=bash
 .DEFAULT_GOAL := help
 
 # App metadata
-APP_ID ?= com.github.romanitalian.ytdownloader
+APP_ID ?= com.github.ytget.ytdownloader
 MAIN_DIR ?= cmd/yt-downloader
 BINARY_NAME ?= yt-downloader
+
+# Install locations
+GOBIN_PATH := $(shell go env GOBIN)
+GOPATH_PATH := $(shell go env GOPATH)
+BIN_DIR := $(if $(GOBIN_PATH),$(GOBIN_PATH),$(GOPATH_PATH)/bin)
 
 .PHONY: help
 help: ## Available commands
@@ -19,6 +24,11 @@ help: ## Available commands
 .PHONY: run
 run: check-deps ## Run application
 	go run cmd/yt-downloader/main.go
+
+.PHONY: debug
+debug: check-deps ## Run app and tee logs to debug.log
+	@echo "Running with logs -> debug.log"
+	@set -o pipefail; go run cmd/yt-downloader/main.go 2>&1 | tee debug.log
 
 .PHONY: check-deps
 check-deps: ## Check that all required dependencies are available
@@ -65,6 +75,26 @@ install-fyne-cli: ## Install Fyne CLI (fyne)
 install-fyne-cross: ## Install fyne-cross (multi-platform build helper)
 	go install github.com/fyne-io/fyne-cross@latest
 
+.PHONY: bundle-resources
+bundle-resources: install-fyne-cli ## Bundle resources (images, fonts) into Go code
+	@echo "Bundling resources..."
+	@if [ -f "yt-downloader.png" ]; then \
+		echo "Note: Using dynamic resource loading instead of bundling large PNG"; \
+		echo "Logo will be loaded from file at runtime"; \
+	else \
+		echo "Warning: yt-downloader.png not found in current directory"; \
+	fi
+
+.PHONY: bundle-resources-optimized
+bundle-resources-optimized: install-fyne-cli ## Bundle optimized resources (requires optimized images)
+	@echo "Bundling optimized resources..."
+	@if [ -f "yt-downloader-optimized.png" ]; then \
+		fyne bundle -o internal/ui/bundled.go yt-downloader-optimized.png; \
+		echo "Optimized resources bundled to internal/ui/bundled.go"; \
+	else \
+		echo "Note: yt-downloader-optimized.png not found. Use bundle-resources for dynamic loading."; \
+	fi
+
 ##@ Packaging (local host)
 
 .PHONY: package-linux
@@ -77,21 +107,42 @@ package-windows: install-fyne-cli ## Package app for Windows (requires Windows h
 
 .PHONY: package-android
 package-android: install-fyne-cli ## Package app for Android (requires Android SDK/NDK)
-	cd $(MAIN_DIR) && fyne package -os android -app-id $(APP_ID)
+	cd $(MAIN_DIR) && fyne package -os android
 
 .PHONY: package-ios
 package-ios: install-fyne-cli ## Package app for iOS (requires Xcode/toolchain)
-	cd $(MAIN_DIR) && fyne package -os ios -app-id $(APP_ID)
+	cd $(MAIN_DIR) && fyne package -os ios
 
 .PHONY: package-ios-simulator
 package-ios-simulator: install-fyne-cli ## Package app for iOS Simulator (requires Xcode)
-	cd $(MAIN_DIR) && fyne package -os iossimulator -app-id $(APP_ID)
+	cd $(MAIN_DIR) && fyne package -os iossimulator
 
 .PHONY: package-desktop
 package-desktop: package-linux package-windows ## Package desktop platforms (run on respective hosts)
 
 .PHONY: package-mobile
 package-mobile: package-android package-ios ## Package mobile platforms
+
+##@ Release
+
+.PHONY: release-linux
+release-linux: install-fyne-cli ## Create release package for Linux
+	cd $(MAIN_DIR) && fyne release -os linux
+
+.PHONY: release-windows
+release-windows: install-fyne-cli ## Create release package for Windows
+	cd $(MAIN_DIR) && fyne release -os windows
+
+.PHONY: release-android
+release-android: install-fyne-cli ## Create release package for Android
+	cd $(MAIN_DIR) && fyne release -os android
+
+.PHONY: release-ios
+release-ios: install-fyne-cli ## Create release package for iOS
+	cd $(MAIN_DIR) && fyne release -os ios
+
+.PHONY: release-all
+release-all: release-linux release-windows release-android release-ios ## Create release packages for all platforms
 
 .PHONY: package-all
 package-all: package-desktop package-mobile ## Package all platforms
@@ -175,6 +226,13 @@ deps-update: ## Update dependencies
 .PHONY: build
 build: ## Build binary
 	go build -o bin/yt-downloader cmd/yt-downloader/main.go
+
+.PHONY: install
+install: ## Install binary to $$GOBIN or $$GOPATH/bin
+	@echo "Installing to $(BIN_DIR)"
+	@mkdir -p "$(BIN_DIR)"
+	go build -o "$(BIN_DIR)/$(BINARY_NAME)" cmd/yt-downloader/main.go
+	@echo "Installed: $(BIN_DIR)/$(BINARY_NAME)"
 
 .PHONY: clean
 clean: ## Clean build artifacts

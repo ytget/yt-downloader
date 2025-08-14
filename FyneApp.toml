@@ -1,0 +1,61 @@
+# Fyne Application Metadata Configuration
+# This file provides metadata for the yt-downloader application
+
+# Application website (optional)
+Website = "https://github.com/ytget/yt-downloader"
+
+[Details]
+# Application icon (will be bundled during build)
+Icon = "yt-downloader.png"
+# Human-friendly application name
+Name = "YT Downloader"
+# Unique application identifier (reverse domain notation)
+ID = "com.github.ytget.ytdownloader"
+# Application version (semantic versioning)
+Version = "1.0.0"
+# Build number (incremented for each release)
+Build = 1
+
+# Linux and BSD specific configuration
+[LinuxAndBSD]
+# Generic name for the application
+GenericName = "YouTube Video Downloader"
+# Application categories for desktop integration
+Categories = ["Network", "Video", "Audio"]
+# Application description/comment
+Comment = "Download videos and playlists from YouTube and other platforms"
+# Keywords for search and categorization
+Keywords = ["youtube", "download", "video", "playlist", "audio", "converter"]
+# Optional execution parameters
+ExecParams = ""
+
+# Windows specific configuration (optional)
+[Windows]
+# Windows application ID (used for Windows Store)
+AppID = "com.github.ytget.ytdownloader"
+
+# macOS specific configuration (optional)
+[macOS]
+# macOS bundle identifier
+BundleID = "com.github.ytget.ytdownloader"
+# macOS category
+Category = "public.app-category.utilities"
+
+# Android specific configuration (optional)
+[Android]
+# Android package name
+PackageName = "com.github.ytget.ytdownloader"
+# Android permissions (if needed)
+Permissions = ["android.permission.INTERNET", "android.permission.WRITE_EXTERNAL_STORAGE"]
+
+# iOS specific configuration (optional)
+[iOS]
+# iOS bundle identifier
+BundleID = "com.github.ytget.ytdownloader"
+# iOS category
+Category = "public.app-category.utilities"
+
+# Migrations configuration (for future Fyne features)
+[Migrations]
+# Enable fyneDo migration for better goroutine handling
+fyneDo = true

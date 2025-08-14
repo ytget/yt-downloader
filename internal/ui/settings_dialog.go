@@ -9,7 +9,7 @@ import (
 
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/romanitalian/yt-downloader/internal/config"
+	"github.com/ytget/yt-downloader/internal/config"
 )
 
 // ShowSettingsDialog shows the application settings dialog

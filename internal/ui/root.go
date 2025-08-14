@@ -10,14 +10,15 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/romanitalian/yt-downloader/internal/config"
-	"github.com/romanitalian/yt-downloader/internal/download"
-	"github.com/romanitalian/yt-downloader/internal/model"
-	"github.com/romanitalian/yt-downloader/internal/platform"
+	"github.com/ytget/yt-downloader/internal/config"
+	"github.com/ytget/yt-downloader/internal/download"
+	"github.com/ytget/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/platform"
 )
 
 // StatusFilter represents different task status filters
@@ -139,8 +140,25 @@ func (ui *RootUI) setupUI() {
 	settingsBtn := widget.NewButton(IconSettings, ui.onShowSettings)
 	settingsBtn.Importance = widget.LowImportance
 
-	// Create top panel (URL row)
-	topPanel := container.NewBorder(nil, nil, container.NewHBox(settingsBtn), ui.downloadBtn, ui.urlEntry)
+	// Create logo
+	logo, err := LoadLogoResource()
+	var logoImage *canvas.Image
+	if err == nil {
+		logoImage = canvas.NewImageFromResource(logo)
+		logoImage.SetMinSize(fyne.NewSize(32, 32))
+		logoImage.FillMode = canvas.ImageFillContain
+	} else {
+		// Fallback to text if logo loading fails
+		logoImage = nil
+	}
+
+	// Create top panel (URL row) with logo
+	var topPanel *fyne.Container
+	if logoImage != nil {
+		topPanel = container.NewBorder(nil, nil, container.NewHBox(logoImage, settingsBtn), ui.downloadBtn, ui.urlEntry)
+	} else {
+		topPanel = container.NewBorder(nil, nil, container.NewHBox(settingsBtn), ui.downloadBtn, ui.urlEntry)
+	}
 
 	// Create notification panel under URL input (hidden by default)
 	ui.notificationLabel = widget.NewLabel("")

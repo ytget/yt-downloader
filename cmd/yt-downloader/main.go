@@ -4,12 +4,12 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 
-	"github.com/romanitalian/yt-downloader/internal/ui"
+	"github.com/ytget/yt-downloader/internal/ui"
 )
 
 func main() {
 	// Create new Fyne app
-	myApp := app.NewWithID("com.romanitalian.yt-downloader")
+	myApp := app.NewWithID("com.ytget.yt-downloader")
 
 	// Apply compact theme
 	myApp.Settings().SetTheme(ui.NewCompactTheme())
