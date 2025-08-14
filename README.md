@@ -2,7 +2,7 @@
 
 Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust yt-dlp integration.
 
-![Screenshot](./yt-downloader.png)
+<img src="./yt-downloader.png" alt="yt-downloader" width="250" height="250" />
 
 ### Quick links
 - [Quick start](#quick-start)
