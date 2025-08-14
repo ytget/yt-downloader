@@ -49,7 +49,7 @@ type Service struct {
 }
 
 // NewService creates a new download service
-func NewService(downloadDir string, maxParallel int) *Service {
+func NewService(downloadDir string, maxParallel int) Downloader {
 	return &Service{
 		tasks:       make(map[string]*model.DownloadTask),
 		maxParallel: maxParallel,

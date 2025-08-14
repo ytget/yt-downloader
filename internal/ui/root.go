@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/ytget/yt-downloader/internal/compress"
 	"github.com/ytget/yt-downloader/internal/config"
 	"github.com/ytget/yt-downloader/internal/download"
 	"github.com/ytget/yt-downloader/internal/model"
@@ -81,7 +82,8 @@ type RootUI struct {
 	currentFilter StatusFilter
 	tasks         binding.UntypedList
 	filteredTasks []*model.DownloadTask
-	downloadSvc   *download.Service
+	downloadSvc   download.Downloader
+	compressSvc   compress.Compressor
 	settings      *config.Settings
 	localization  *Localization
 
@@ -100,7 +102,7 @@ type RootUI struct {
 }
 
 // NewRootUI creates and initializes the main UI
-func NewRootUI(window fyne.Window, app fyne.App) *RootUI {
+func NewRootUI(window fyne.Window, app fyne.App, downloadSvc download.Downloader, compressSvc compress.Compressor) *RootUI {
 	// Initialize settings
 	settings := config.NewSettings(app)
 
@@ -117,7 +119,8 @@ func NewRootUI(window fyne.Window, app fyne.App) *RootUI {
 	ui := &RootUI{
 		window:       window,
 		tasks:        binding.NewUntypedList(),
-		downloadSvc:  download.NewService(downloadsDir, settings.GetMaxParallelDownloads()),
+		downloadSvc:  downloadSvc,
+		compressSvc:  compressSvc,
 		settings:     settings,
 		localization: localization,
 
