@@ -55,7 +55,7 @@ type Service struct {
 }
 
 // NewService creates a new compression service
-func NewService() *Service {
+func NewService() Compressor {
 	return &Service{
 		tasks: make(map[string]*model.CompressionTask),
 	}
@@ -125,14 +125,6 @@ func (s *Service) StopCompression(taskID string) error {
 	return nil
 }
 
-// GetTask returns a compression task by ID
-func (s *Service) GetTask(taskID string) (*model.CompressionTask, bool) {
-	s.tasksMutex.RLock()
-	defer s.tasksMutex.RUnlock()
-	task, exists := s.tasks[taskID]
-	return task, exists
-}
-
 // startCompression performs the actual compression
 func (s *Service) startCompression(task *model.CompressionTask) {
 	// Update status to starting
@@ -178,7 +170,7 @@ func (s *Service) startCompression(task *model.CompressionTask) {
 	s.notifyUpdate(task)
 
 	// Build ffmpeg command
-	args := s.buildFFmpegArgs(task.InputPath, task.OutputPath)
+	args := s.BuildFFmpegArgs(task.InputPath, task.OutputPath)
 	cmd := exec.CommandContext(ctx, FFmpegCommand, args...)
 
 	// Setup progress monitoring
@@ -222,8 +214,16 @@ func (s *Service) startCompression(task *model.CompressionTask) {
 	s.notifyUpdate(task)
 }
 
-// buildFFmpegArgs builds the ffmpeg command arguments
-func (s *Service) buildFFmpegArgs(inputPath, outputPath string) []string {
+// GetTask returns a compression task by ID
+func (s *Service) GetTask(taskID string) (*model.CompressionTask, bool) {
+	s.tasksMutex.RLock()
+	defer s.tasksMutex.RUnlock()
+	task, exists := s.tasks[taskID]
+	return task, exists
+}
+
+// BuildFFmpegArgs builds the ffmpeg command arguments
+func (s *Service) BuildFFmpegArgs(inputPath, outputPath string) []string {
 	return []string{
 		"-y",            // Overwrite output file
 		"-i", inputPath, // Input file

@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewService(t *testing.T) {
-	service := NewService("/tmp", 2)
+	service := NewService("/tmp", 2).(*Service)
 
 	if service.downloadDir != "/tmp" {
 		t.Errorf("Expected downloadDir to be '/tmp', got '%s'", service.downloadDir)
@@ -144,7 +144,7 @@ func TestGetAllTasks(t *testing.T) {
 }
 
 func TestUpdateCallback(t *testing.T) {
-	service := NewService("/tmp", 1)
+	service := NewService("/tmp", 1).(*Service)
 
 	updateCalled := false
 	var updatedTask *model.DownloadTask

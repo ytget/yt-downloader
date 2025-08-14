@@ -4,6 +4,10 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 
+	"github.com/ytget/yt-downloader/internal/compress"
+	"github.com/ytget/yt-downloader/internal/config"
+	"github.com/ytget/yt-downloader/internal/download"
+	"github.com/ytget/yt-downloader/internal/platform"
 	"github.com/ytget/yt-downloader/internal/ui"
 )
 
@@ -26,8 +30,16 @@ func main() {
 	myWindow := myApp.NewWindow(AppName)
 	myWindow.Resize(fyne.NewSize(WindowWidth, WindowHeight))
 
+	// Initialize services
+	settings := config.NewSettings(myApp)
+	downloadsDir := settings.GetDownloadDirectory()
+	platform.CreateDirectoryIfNotExists(downloadsDir)
+
+	downloadSvc := download.NewService(downloadsDir, settings.GetMaxParallelDownloads())
+	compressSvc := compress.NewService()
+
 	// Create and setup UI
-	ui.NewRootUI(myWindow, myApp)
+	ui.NewRootUI(myWindow, myApp, downloadSvc, compressSvc)
 
 	// Show and run
 	myWindow.ShowAndRun()
