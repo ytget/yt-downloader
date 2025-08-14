@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/romanitalian/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/model"
 )
 
 func TestNewService(t *testing.T) {

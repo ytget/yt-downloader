@@ -1,4 +1,4 @@
-module github.com/romanitalian/yt-downloader
+module github.com/ytget/yt-downloader
 
 go 1.24.6
 

@@ -2,6 +2,8 @@
 
 Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust yt-dlp integration.
 
+![Screenshot](./yt-downloader.png)
+
 ### Quick links
 - [Quick start](#quick-start)
 - [Usage](#usage)
@@ -16,6 +18,7 @@ Lightweight cross‑platform desktop app to download YouTube videos and playlist
 - [What is this?](#what-is-this)
 - [Purpose](#purpose)
 - [Features](#features)
+- [Supported platforms](#supported-platforms)
 - [Architecture overview](#architecture-overview)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -25,6 +28,9 @@ Lightweight cross‑platform desktop app to download YouTube videos and playlist
 - [Playlist parsing and yt-dlp flags](#playlist-parsing-and-yt-dlp-flags)
 - [Development (Makefile driven)](#development-makefile-driven)
 - [Troubleshooting](#troubleshooting)
+- [Diagnostics and issue reporting](#diagnostics-and-issue-reporting)
+- [FAQ](#faq)
+- [Legal note](#legal-note)
 - [Roadmap (high level)](#roadmap-high-level)
 - [Contributing](#contributing)
 - [Acknowledgements](#acknowledgements)
@@ -48,6 +54,11 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
 - Localization: System, English, Русский, Português.
 - Cross‑platform (macOS, Linux, Windows) using Fyne.
 
+### Supported platforms
+- macOS 12+
+- Linux (X11/Wayland)
+- Windows 10/11
+
 ### Architecture overview
 - UI: Fyne (`internal/ui`) with a unified playlist view and task rows.
 - Downloads: `github.com/lrstanley/go-ytdlp` wrapper (uses yt-dlp under the hood) for single videos.
@@ -60,10 +71,22 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
   - macOS: `brew install yt-dlp`
   - Linux (Debian/Ubuntu): `sudo apt install yt-dlp` (or install latest from the project)
   - Windows: install from the official project and add to PATH
+  - Optional but recommended: `ffmpeg` installed in PATH for muxing/format conversions.
 
 ### Installation
 - Clone the repo and ensure `yt-dlp` is installed.
 - The app runs without additional system services. All dependencies are Go modules; UI uses Fyne.
+- Install binary into your Go bin:
+
+```
+make install
+```
+
+- Alternatively, download `yt-dlp` locally into `./bin` via:
+
+```
+make deps
+```
 
 ### Quick start
 1) Install `yt-dlp`.
@@ -113,6 +136,7 @@ Key targets:
 - `deps-update`: Update modules.
 - `clean`: Remove build artifacts.
 - `docker-run` / `docker-stop`: Run/stop via docker-compose.
+ - `debug`: Run app and tee logs to `debug.log` (useful for bug reports).
 
 Aliases:
 - `r` -> run, `t` -> test, `l` -> lint, `f` -> format, `dr` -> docker-run, `ds` -> docker-stop.
@@ -123,11 +147,38 @@ Aliases:
 - Progress not showing 100%: for rare cases with unknown total size, completion will still flip the status to Completed.
 - macOS Gatekeeper: you may need to allow the app/network access depending on your environment.
 
+### Diagnostics and issue reporting
+When reporting a bug, please include:
+- Your OS and version, Go version, and `yt-dlp --version`.
+- Example URL(s) that reproduce the issue (video or playlist with `list=`).
+- Full app logs captured from a terminal session.
+
+How to capture logs:
+
+```
+make debug
+# or manually
+make run 2>&1 | tee debug.log
+```
+
+Before filing an issue, please:
+- Ensure you are on the latest `yt-dlp` (update it if needed).
+- Search existing issues to avoid duplicates.
+- Provide clear steps to reproduce and expected vs actual behavior.
+
 ### Roadmap (high level)
 - More granular quality/format selection.
 - Persistent task history and resume between sessions.
 - Export/import playlist queues.
 - Theming and additional locales.
+
+### FAQ
+- Why do I need `yt-dlp` installed? — The app delegates extraction/downloading to `yt-dlp` for maximum site compatibility and performance.
+- How do I update `yt-dlp`? — Use your package manager (e.g. `brew upgrade yt-dlp`) or run `make deps` to refresh the local copy in `./bin`.
+- Where are files saved? — By default to the system Downloads folder; you can change it in Settings.
+
+### Legal note
+This tool is intended for downloading content you have the rights to access. Respect platform Terms of Service and local laws.
 
 ### Contributing
 Contributions are welcome! Please:
@@ -140,6 +191,7 @@ Contributions are welcome! Please:
 - `yt-dlp` — the heart of extraction.
 - `Fyne` — cross‑platform UI.
 - `go-ytdlp` — Go wrapper around yt-dlp used for downloads.
+- Inspiration from [`youtube-dl`](https://github.com/ytdl-org/youtube-dl) project and its excellent documentation structure.
 
 ### License
 MIT License

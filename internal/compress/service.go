@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/romanitalian/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/model"
 )
 
 // FFmpeg constants for compression settings

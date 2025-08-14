@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/romanitalian/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/model"
 )
 
 // PlaylistParserService handles parsing of YouTube playlists

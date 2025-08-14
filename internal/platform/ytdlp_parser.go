@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/romanitalian/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/model"
 )
 
 // YTDLPParserService handles parsing of YouTube playlists using yt-dlp
