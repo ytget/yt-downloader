@@ -58,12 +58,32 @@ format: ## Format code
 	goimports -l -w .
 
 .PHONY: docker-run
-docker-run: ## Run application in docker
-	docker-compose up -d --build
+docker-run: ## Run application in docker with health check
+	@echo "Starting application in Docker..."
+	@docker-compose up -d --build
+	@echo "Waiting for services to be ready..."
+	@timeout 30s sh -c 'until docker-compose ps | grep -q "Up"; do sleep 1; done' || echo "Warning: Services may still be starting"
+	@echo "Application started. Use 'make docker-logs' to view logs"
 
 .PHONY: docker-stop
 docker-stop: ## Stop application in docker
-	docker-compose down
+	@echo "Stopping application in Docker..."
+	@docker-compose down
+	@echo "Application stopped"
+
+.PHONY: docker-logs
+docker-logs: ## View docker application logs
+	@docker-compose logs -f
+
+.PHONY: docker-clean
+docker-clean: ## Clean up docker containers and images
+	@echo "Cleaning up Docker resources..."
+	@docker-compose down --rmi all --volumes --remove-orphans
+	@echo "Docker cleanup completed"
+
+.PHONY: docker-status
+docker-status: ## Check docker application status
+	@docker-compose ps
 
 ##@ Tools
 
@@ -263,3 +283,15 @@ dr: ## Run app in docker
 .PHONY: ds
 ds: ## Stop app in docker
 	@make docker-stop
+
+.PHONY: dl
+dl: ## View docker logs
+	@make docker-logs
+
+.PHONY: dc
+dc: ## Clean docker resources
+	@make docker-clean
+
+.PHONY: dst
+dst: ## Check docker status
+	@make docker-status

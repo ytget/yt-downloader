@@ -12,6 +12,12 @@ import (
 	"github.com/ytget/yt-downloader/internal/config"
 )
 
+// Dialog size constants
+const (
+	SettingsDialogWidth  = 500
+	SettingsDialogHeight = 400
+)
+
 // ShowSettingsDialog shows the application settings dialog
 func ShowSettingsDialog(window fyne.Window, settings *config.Settings, localization *Localization, onSettingsChanged func()) {
 	// Download directory selection
@@ -107,6 +113,6 @@ func ShowSettingsDialog(window fyne.Window, settings *config.Settings, localizat
 			saveSettings()
 		}
 	}, window)
-	dlg.Resize(fyne.NewSize(500, 400))
+	dlg.Resize(fyne.NewSize(SettingsDialogWidth, SettingsDialogHeight))
 	dlg.Show()
 }

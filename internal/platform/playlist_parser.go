@@ -9,6 +9,25 @@ import (
 	"github.com/ytget/yt-downloader/internal/model"
 )
 
+// Timeout constants
+const (
+	DefaultPlaylistParseTimeout = 30 * time.Second
+)
+
+// URL parameters
+const (
+	PlaylistURLParam       = "list="
+	PlaylistParamSeparator = "&"
+)
+
+// Default values
+const (
+	DefaultPlaylistTitle = "Untitled Playlist"
+	DefaultTitleSuffix   = " - Playlist"
+	MaxTitleLength       = 50
+	TitleTruncateSuffix  = "..."
+)
+
 // PlaylistParserService handles parsing of YouTube playlists
 type PlaylistParserService struct {
 	timeout time.Duration
@@ -17,7 +36,7 @@ type PlaylistParserService struct {
 // NewPlaylistParserService creates a new playlist parser service
 func NewPlaylistParserService() *PlaylistParserService {
 	return &PlaylistParserService{
-		timeout: 30 * time.Second,
+		timeout: DefaultPlaylistParseTimeout,
 	}
 }
 
@@ -73,7 +92,7 @@ func (p *PlaylistParserService) ParsePlaylist(ctx context.Context, url string) (
 // isValidPlaylistURL checks if the URL is a valid YouTube playlist URL
 func (p *PlaylistParserService) isValidPlaylistURL(url string) bool {
 	// Check for playlist parameter in URL
-	return strings.Contains(url, "list=")
+	return strings.Contains(url, PlaylistURLParam)
 }
 
 // extractPlaylistID extracts the playlist ID from a YouTube playlist URL
@@ -85,12 +104,12 @@ func (p *PlaylistParserService) extractPlaylistID(url string) (string, error) {
 	// - https://www.youtube.com/playlist?list=PLAYLIST_ID
 
 	// Find list parameter
-	if !strings.Contains(url, "list=") {
+	if !strings.Contains(url, PlaylistURLParam) {
 		return "", fmt.Errorf("URL does not contain playlist parameter")
 	}
 
 	// Extract everything after list=
-	parts := strings.Split(url, "list=")
+	parts := strings.Split(url, PlaylistURLParam)
 	if len(parts) < 2 {
 		return "", fmt.Errorf("could not extract playlist ID from URL")
 	}
@@ -98,8 +117,8 @@ func (p *PlaylistParserService) extractPlaylistID(url string) (string, error) {
 	playlistID := parts[1]
 
 	// Remove any additional parameters (everything after &)
-	if strings.Contains(playlistID, "&") {
-		playlistID = strings.Split(playlistID, "&")[0]
+	if strings.Contains(playlistID, PlaylistParamSeparator) {
+		playlistID = strings.Split(playlistID, PlaylistParamSeparator)[0]
 	}
 
 	if playlistID == "" {
@@ -119,17 +138,17 @@ func (p *PlaylistParserService) parsePlaylistVideos(ctx context.Context, url str
 // extractPlaylistTitle extracts a meaningful title for the playlist
 func (p *PlaylistParserService) extractPlaylistTitle(videos []*model.PlaylistVideo) string {
 	if len(videos) == 0 {
-		return "Untitled Playlist"
+		return DefaultPlaylistTitle
 	}
 
 	// Try to find a common pattern in video titles
 	// For now, just use the first video title with "Playlist" suffix
 	firstTitle := videos[0].Title
-	if len(firstTitle) > 50 {
-		firstTitle = firstTitle[:50] + "..."
+	if len(firstTitle) > MaxTitleLength {
+		firstTitle = firstTitle[:MaxTitleLength] + TitleTruncateSuffix
 	}
 
-	return firstTitle + " - Playlist"
+	return firstTitle + DefaultTitleSuffix
 }
 
 // SetTimeout sets the timeout for playlist parsing
