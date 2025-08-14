@@ -15,10 +15,30 @@ import (
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/ytget/yt-downloader/internal/compress"
 	"github.com/ytget/yt-downloader/internal/config"
 	"github.com/ytget/yt-downloader/internal/download"
 	"github.com/ytget/yt-downloader/internal/model"
 	"github.com/ytget/yt-downloader/internal/platform"
+)
+
+// UI constants
+const (
+	RootPlaylistQueryParam = "list="
+	RootUIUpdateDebounce   = 100 * time.Millisecond
+)
+
+// Toast notification constants
+const (
+	RootToastWidth    = 300
+	RootToastHeight   = 120
+	RootToastMargin   = 20
+	RootToastAutoHide = 5 * time.Second
+)
+
+// Playlist processing constants
+const (
+	RootPlaylistParseDelay = 500 * time.Millisecond
 )
 
 // StatusFilter represents different task status filters
@@ -62,7 +82,8 @@ type RootUI struct {
 	currentFilter StatusFilter
 	tasks         binding.UntypedList
 	filteredTasks []*model.DownloadTask
-	downloadSvc   *download.Service
+	downloadSvc   download.Downloader
+	compressSvc   compress.Compressor
 	settings      *config.Settings
 	localization  *Localization
 
@@ -81,7 +102,7 @@ type RootUI struct {
 }
 
 // NewRootUI creates and initializes the main UI
-func NewRootUI(window fyne.Window, app fyne.App) *RootUI {
+func NewRootUI(window fyne.Window, app fyne.App, downloadSvc download.Downloader, compressSvc compress.Compressor) *RootUI {
 	// Initialize settings
 	settings := config.NewSettings(app)
 
@@ -98,7 +119,8 @@ func NewRootUI(window fyne.Window, app fyne.App) *RootUI {
 	ui := &RootUI{
 		window:       window,
 		tasks:        binding.NewUntypedList(),
-		downloadSvc:  download.NewService(downloadsDir, settings.GetMaxParallelDownloads()),
+		downloadSvc:  downloadSvc,
+		compressSvc:  compressSvc,
 		settings:     settings,
 		localization: localization,
 
@@ -672,7 +694,7 @@ func (ui *RootUI) onCopyPath(filePath string) {
 		return
 	}
 
-	clipboard := ui.window.Clipboard()
+	clipboard := fyne.CurrentApp().Clipboard()
 	clipboard.SetContent(filePath)
 	widget.ShowPopUp(widget.NewLabel("Path copied to clipboard"), ui.window.Canvas())
 }
@@ -724,7 +746,7 @@ func (ui *RootUI) debouncedUIUpdate() {
 	defer ui.uiUpdateMutex.Unlock()
 
 	now := time.Now()
-	if now.Sub(ui.lastUIUpdate) < UIUpdateDebounce {
+	if now.Sub(ui.lastUIUpdate) < RootUIUpdateDebounce {
 		return // Skip update if too soon
 	}
 
@@ -920,8 +942,8 @@ func (ui *RootUI) showToastNotification(task *model.DownloadTask) {
 
 	// Position in top-right corner
 	canvasSize := ui.window.Canvas().Size()
-	toastSize := fyne.NewSize(ToastWidth, ToastHeight)
-	toastPos := fyne.NewPos(canvasSize.Width-toastSize.Width-ToastMargin, ToastMargin)
+	toastSize := fyne.NewSize(RootToastWidth, RootToastHeight)
+	toastPos := fyne.NewPos(canvasSize.Width-toastSize.Width-RootToastMargin, RootToastMargin)
 
 	toastPopup.Resize(toastSize)
 	toastPopup.Move(toastPos)
@@ -929,7 +951,7 @@ func (ui *RootUI) showToastNotification(task *model.DownloadTask) {
 
 	// Auto-hide after configured time
 	go func() {
-		time.Sleep(ToastAutoHide)
+		time.Sleep(RootToastAutoHide)
 		if toastPopup != nil {
 			toastPopup.Hide()
 		}
@@ -977,7 +999,7 @@ func (ui *RootUI) onPlaylistCancel(playlist *model.Playlist) {
 
 // isPlaylistURL checks if the URL is a playlist URL
 func (ui *RootUI) isPlaylistURL(url string) bool {
-	return strings.Contains(url, PlaylistQueryParam)
+	return strings.Contains(url, RootPlaylistQueryParam)
 }
 
 // handlePlaylistURL handles playlist URL processing
@@ -1025,7 +1047,7 @@ func (ui *RootUI) handlePlaylistURL(url string) {
 			log.Printf("Auto-starting playlist download...")
 			go func() {
 				// Small delay to ensure UI is updated
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(RootPlaylistParseDelay)
 
 				// Start downloading the playlist
 				err := ui.downloadSvc.AddPlaylist(playlist)
