@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ytget/yt-downloader/internal/model"
 )
 
@@ -33,6 +34,17 @@ const (
 
 	// Output suffix
 	CompressedSuffix = "-compressed"
+
+	// Executable and I/O constants
+	FFmpegCommand       = "ffmpeg"
+	FFprobeCommand      = "ffprobe"
+	FFprobeLogLevel     = "error"
+	FFprobeShowEntries  = "format=duration"
+	FFprobeOutputFormat = "csv=p=0"
+	ProgressPipeTarget  = "pipe:2"
+	ProgressTimePrefix  = "out_time_us="
+	TaskIDPrefix        = "compress-"
+	OutputExtensionMP4  = ".mp4"
 )
 
 // Service handles video compression operations
@@ -43,7 +55,7 @@ type Service struct {
 }
 
 // NewService creates a new compression service
-func NewService() *Service {
+func NewService() Compressor {
 	return &Service{
 		tasks: make(map[string]*model.CompressionTask),
 	}
@@ -113,14 +125,6 @@ func (s *Service) StopCompression(taskID string) error {
 	return nil
 }
 
-// GetTask returns a compression task by ID
-func (s *Service) GetTask(taskID string) (*model.CompressionTask, bool) {
-	s.tasksMutex.RLock()
-	defer s.tasksMutex.RUnlock()
-	task, exists := s.tasks[taskID]
-	return task, exists
-}
-
 // startCompression performs the actual compression
 func (s *Service) startCompression(task *model.CompressionTask) {
 	// Update status to starting
@@ -166,8 +170,8 @@ func (s *Service) startCompression(task *model.CompressionTask) {
 	s.notifyUpdate(task)
 
 	// Build ffmpeg command
-	args := s.buildFFmpegArgs(task.InputPath, task.OutputPath)
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	args := s.BuildFFmpegArgs(task.InputPath, task.OutputPath)
+	cmd := exec.CommandContext(ctx, FFmpegCommand, args...)
 
 	// Setup progress monitoring
 	stderr, err := cmd.StderrPipe()
@@ -210,8 +214,16 @@ func (s *Service) startCompression(task *model.CompressionTask) {
 	s.notifyUpdate(task)
 }
 
-// buildFFmpegArgs builds the ffmpeg command arguments
-func (s *Service) buildFFmpegArgs(inputPath, outputPath string) []string {
+// GetTask returns a compression task by ID
+func (s *Service) GetTask(taskID string) (*model.CompressionTask, bool) {
+	s.tasksMutex.RLock()
+	defer s.tasksMutex.RUnlock()
+	task, exists := s.tasks[taskID]
+	return task, exists
+}
+
+// BuildFFmpegArgs builds the ffmpeg command arguments
+func (s *Service) BuildFFmpegArgs(inputPath, outputPath string) []string {
 	return []string{
 		"-y",            // Overwrite output file
 		"-i", inputPath, // Input file
@@ -221,7 +233,7 @@ func (s *Service) buildFFmpegArgs(inputPath, outputPath string) []string {
 		"-c:a", AudioCodec, // Audio codec
 		"-b:a", AudioBitrate, // Audio bitrate
 		"-movflags", FastStartFlag, // MP4 optimization
-		"-progress", "pipe:2", // Progress to stderr
+		"-progress", ProgressPipeTarget, // Progress to stderr
 		"-nostats", // No stats output
 		outputPath, // Output file
 	}
@@ -229,7 +241,7 @@ func (s *Service) buildFFmpegArgs(inputPath, outputPath string) []string {
 
 // getVideoDuration gets the duration of a video file using ffprobe
 func (s *Service) getVideoDuration(filePath string) (float64, error) {
-	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filePath)
+	cmd := exec.Command(FFprobeCommand, "-v", FFprobeLogLevel, "-show_entries", FFprobeShowEntries, "-of", FFprobeOutputFormat, filePath)
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("failed to run ffprobe: %w", err)
@@ -253,8 +265,8 @@ func (s *Service) monitorProgress(stderr io.ReadCloser, task *model.CompressionT
 		line := strings.TrimSpace(scanner.Text())
 
 		// Parse progress line: out_time_us=123456
-		if strings.HasPrefix(line, "out_time_us=") {
-			timeStr := strings.TrimPrefix(line, "out_time_us=")
+		if strings.HasPrefix(line, ProgressTimePrefix) {
+			timeStr := strings.TrimPrefix(line, ProgressTimePrefix)
 			timeMicroseconds, err := strconv.ParseInt(timeStr, 10, 64)
 			if err != nil {
 				continue
@@ -303,10 +315,17 @@ func (s *Service) notifyUpdate(task *model.CompressionTask) {
 func generateOutputPath(inputPath string) string {
 	ext := filepath.Ext(inputPath)
 	baseName := strings.TrimSuffix(inputPath, ext)
-	return baseName + CompressedSuffix + ".mp4"
+	return baseName + CompressedSuffix + OutputExtensionMP4
 }
 
-// generateTaskID generates a unique task ID
+// generateTaskID generates a unique task ID using UUID v7 for better uniqueness and time ordering
 func generateTaskID() string {
-	return fmt.Sprintf("compress-%d", time.Now().UnixNano())
+	// Use UUID v7 which includes timestamp and is naturally ordered
+	// This provides better uniqueness and allows for chronological sorting
+	id, err := uuid.NewV7()
+	if err != nil {
+		// Fallback to timestamp if UUID generation fails
+		return fmt.Sprintf(TaskIDPrefix+"%d", time.Now().UnixNano())
+	}
+	return TaskIDPrefix + id.String()
 }

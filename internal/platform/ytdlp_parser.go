@@ -12,6 +12,49 @@ import (
 	"github.com/ytget/yt-downloader/internal/model"
 )
 
+// Timeout constants
+const (
+	DefaultParseTimeout = 60 * time.Second
+)
+
+// URL parameters and separators
+const (
+	PlaylistParam  = "list="
+	ParamSeparator = "&"
+)
+
+// JSON field keys
+const (
+	JSONFieldID             = "id"
+	JSONFieldTitle          = "title"
+	JSONFieldDuration       = "duration"
+	JSONFieldDurationString = "duration_string"
+)
+
+// Default values
+const (
+	DefaultDuration     = "Unknown"
+	DefaultPlaylistName = "Unknown Playlist"
+)
+
+// URL templates
+const (
+	YouTubeVideoURLTemplate = "https://www.youtube.com/watch?v=%s"
+)
+
+// Playlist title constants
+const (
+	MinPrefixLength = 10
+	PlaylistSuffix  = " Playlist"
+)
+
+// Time formatting constants
+const (
+	SecondsPerHour   = 3600
+	SecondsPerMinute = 60
+	TimeFormat       = "%02d"
+)
+
 // YTDLPParserService handles parsing of YouTube playlists using yt-dlp
 type YTDLPParserService struct {
 	timeout time.Duration
@@ -20,7 +63,7 @@ type YTDLPParserService struct {
 // NewYTDLPParserService creates a new yt-dlp parser service
 func NewYTDLPParserService() *YTDLPParserService {
 	return &YTDLPParserService{
-		timeout: 60 * time.Second,
+		timeout: DefaultParseTimeout,
 	}
 }
 
@@ -67,7 +110,7 @@ func (y *YTDLPParserService) ParsePlaylist(ctx context.Context, url string) (*mo
 
 // isValidPlaylistURL checks if the URL is a valid YouTube playlist URL
 func (y *YTDLPParserService) isValidPlaylistURL(url string) bool {
-	return strings.Contains(url, "list=")
+	return strings.Contains(url, PlaylistParam)
 }
 
 // extractPlaylistID extracts the playlist ID from various URL formats
@@ -76,13 +119,13 @@ func (y *YTDLPParserService) extractPlaylistID(url string) string {
 	// https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID
 	// https://www.youtube.com/playlist?list=PLAYLIST_ID
 
-	if strings.Contains(url, "list=") {
-		parts := strings.Split(url, "list=")
+	if strings.Contains(url, PlaylistParam) {
+		parts := strings.Split(url, PlaylistParam)
 		if len(parts) > 1 {
 			playlistPart := parts[1]
 			// Remove additional parameters after playlist ID
-			if strings.Contains(playlistPart, "&") {
-				playlistPart = strings.Split(playlistPart, "&")[0]
+			if strings.Contains(playlistPart, ParamSeparator) {
+				playlistPart = strings.Split(playlistPart, ParamSeparator)[0]
 			}
 			return playlistPart
 		}
@@ -135,28 +178,28 @@ func (y *YTDLPParserService) parseYTDLPJSONOutput(output string) ([]*model.Playl
 		}
 
 		// Extract required fields
-		id, ok := videoData["id"].(string)
+		id, ok := videoData[JSONFieldID].(string)
 		if !ok || id == "" {
 			continue
 		}
 
-		title, ok := videoData["title"].(string)
+		title, ok := videoData[JSONFieldTitle].(string)
 		if !ok || title == "" {
 			continue
 		}
 
 		// Get duration from duration_string if available, otherwise from duration
 		var duration string
-		if durationStr, ok := videoData["duration_string"].(string); ok && durationStr != "" {
+		if durationStr, ok := videoData[JSONFieldDurationString].(string); ok && durationStr != "" {
 			duration = durationStr
-		} else if durationFloat, ok := videoData["duration"].(float64); ok {
+		} else if durationFloat, ok := videoData[JSONFieldDuration].(float64); ok {
 			duration = y.formatDuration(int(durationFloat))
 		} else {
-			duration = "Unknown"
+			duration = DefaultDuration
 		}
 
 		// Create video URL
-		videoURL := fmt.Sprintf("https://www.youtube.com/watch?v=%s", id)
+		videoURL := fmt.Sprintf(YouTubeVideoURLTemplate, id)
 
 		video := &model.PlaylistVideo{
 			ID:        id,
@@ -179,7 +222,7 @@ func (y *YTDLPParserService) parseYTDLPJSONOutput(output string) ([]*model.Playl
 func (y *YTDLPParserService) parseDuration(durationStr string) string {
 	// yt-dlp returns duration in seconds
 	if durationStr == "" {
-		return "Unknown"
+		return DefaultDuration
 	}
 
 	// Try to parse as seconds
@@ -193,20 +236,20 @@ func (y *YTDLPParserService) parseDuration(durationStr string) string {
 
 // formatDuration formats seconds into HH:MM:SS format
 func (y *YTDLPParserService) formatDuration(seconds int) string {
-	hours := seconds / 3600
-	minutes := (seconds % 3600) / 60
-	secs := seconds % 60
+	hours := seconds / SecondsPerHour
+	minutes := (seconds % SecondsPerHour) / SecondsPerMinute
+	secs := seconds % SecondsPerMinute
 
 	if hours > 0 {
-		return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, secs)
+		return fmt.Sprintf(TimeFormat+":"+TimeFormat+":"+TimeFormat, hours, minutes, secs)
 	}
-	return fmt.Sprintf("%02d:%02d", minutes, secs)
+	return fmt.Sprintf(TimeFormat+":"+TimeFormat, minutes, secs)
 }
 
 // extractPlaylistTitle generates a title for the playlist based on videos
 func (y *YTDLPParserService) extractPlaylistTitle(videos []*model.PlaylistVideo) string {
 	if len(videos) == 0 {
-		return "Unknown Playlist"
+		return DefaultPlaylistName
 	}
 
 	// Try to extract common prefix from video titles
@@ -214,21 +257,18 @@ func (y *YTDLPParserService) extractPlaylistTitle(videos []*model.PlaylistVideo)
 		firstTitle := videos[0].Title
 		commonPrefix := y.findCommonPrefix(firstTitle, videos[1].Title)
 
-		if len(commonPrefix) > 10 { // Only use if prefix is meaningful
-			return strings.TrimSpace(commonPrefix) + " Playlist"
+		if len(commonPrefix) > MinPrefixLength { // Only use if prefix is meaningful
+			return strings.TrimSpace(commonPrefix) + PlaylistSuffix
 		}
 	}
 
 	// Fallback: use first video title + "Playlist"
-	return videos[0].Title + " Playlist"
+	return videos[0].Title + PlaylistSuffix
 }
 
 // findCommonPrefix finds the common prefix between two strings
 func (y *YTDLPParserService) findCommonPrefix(s1, s2 string) string {
-	minLen := len(s1)
-	if len(s2) < minLen {
-		minLen = len(s2)
-	}
+	minLen := min(len(s1), len(s2))
 
 	for i := 0; i < minLen; i++ {
 		if s1[i] != s2[i] {
