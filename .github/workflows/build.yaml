@@ -35,23 +35,29 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-          key: ${{ runner.os }}-gobuild-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-gobuild-
+      - name: Install system dependencies (GL/X11)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xorg-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            mesa-common-dev
 
-      - name: Lint (golangci-lint)
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.58.2
-          install-mode: go
-          args: --timeout=5m --out-format=github-actions ./...
+      - name: Install tools
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Lint
         env:
           CGO_ENABLED: 1
+        run: golangci-lint run --timeout=10m ./...
 
       - name: Test
         run: make test
