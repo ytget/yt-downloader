@@ -33,7 +33,9 @@ const (
 	TaskRowDialogHeight = 400
 )
 
-// formatFileSize formats file size in bytes to human readable format
+// formatFileSize is intentionally unused in current compact UI; keep for future use.
+//
+//lint:ignore U1000 keep for future size labels in task rows
 func formatFileSize(bytes int64) string {
 	if bytes < FileSizeUnit {
 		return fmt.Sprintf("%d B", bytes)

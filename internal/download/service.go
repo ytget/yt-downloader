@@ -716,6 +716,8 @@ func (s *Service) extractVideoID(url string) string {
 }
 
 // generateUserFriendlyPath generates a user-friendly file path with original title
+//
+//lint:ignore U1000 reserved for future rename feature
 func (s *Service) generateUserFriendlyPath(task *model.DownloadTask) string {
 	if task.Title == "" || task.OutputPath == "" {
 		return ""
@@ -751,6 +753,8 @@ func (s *Service) generateUserFriendlyPath(task *model.DownloadTask) string {
 }
 
 // sanitizeFilename removes or replaces characters that are not safe for filenames
+//
+//lint:ignore U1000 reserved for future rename feature
 func (s *Service) sanitizeFilename(filename string) string {
 	// Replace unsafe characters
 	unsafe := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
@@ -888,26 +892,19 @@ func (s *Service) downloadPlaylistVideo(playlist *model.Playlist, video *model.P
 
 	// Monitor task progress
 	go func() {
-		for {
-			select {
-			case <-time.After(100 * time.Millisecond):
-				// Update video progress
-				if task.Status.IsFinished() {
-					if task.Status == model.TaskStatusCompleted {
-						// Update video with task info including OutputPath
-						playlist.UpdateVideoOutputPath(video.ID, task.OutputPath, task.FileSize)
-						playlist.UpdateVideoStatus(video.ID, model.VideoStatusCompleted)
-						playlist.UpdateVideoProgress(video.ID, 100.0)
-					} else {
-						playlist.UpdateVideoStatus(video.ID, model.VideoStatusError)
-						video.Error = task.LastError
-					}
-					return
+		for range time.NewTicker(100 * time.Millisecond).C {
+			if task.Status.IsFinished() {
+				if task.Status == model.TaskStatusCompleted {
+					playlist.UpdateVideoOutputPath(video.ID, task.OutputPath, task.FileSize)
+					playlist.UpdateVideoStatus(video.ID, model.VideoStatusCompleted)
+					playlist.UpdateVideoProgress(video.ID, 100.0)
+				} else {
+					playlist.UpdateVideoStatus(video.ID, model.VideoStatusError)
+					video.Error = task.LastError
 				}
-
-				// Update progress
-				playlist.UpdateVideoProgress(video.ID, task.Progress)
+				return
 			}
+			playlist.UpdateVideoProgress(video.ID, task.Progress)
 		}
 	}()
 }

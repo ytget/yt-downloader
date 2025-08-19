@@ -114,7 +114,9 @@ func NewRootUI(window fyne.Window, app fyne.App, downloadSvc download.Downloader
 	downloadsDir := settings.GetDownloadDirectory()
 
 	// Ensure directory exists
-	platform.CreateDirectoryIfNotExists(downloadsDir)
+	if err := platform.CreateDirectoryIfNotExists(downloadsDir); err != nil {
+		log.Printf("failed to ensure downloads dir: %v", err)
+	}
 
 	ui := &RootUI{
 		window:       window,
@@ -366,7 +368,7 @@ func (ui *RootUI) onDownloadClick() {
 		task.ID, task.Status, task.OutputPath)
 
 	// Add to UI task list
-	ui.tasks.Append(task)
+	_ = ui.tasks.Append(task)
 
 	// Add to unified video list in PlaylistGroup
 	ui.playlistGroup.AddIndividualVideo(task)
@@ -402,6 +404,8 @@ func (ui *RootUI) showNotification(message string, spinning bool) {
 }
 
 // hideNotification hides the notification panel.
+//
+//lint:ignore U1000 kept for future UI interactions (hide toast panel)
 func (ui *RootUI) hideNotification() {
 	if ui.notificationContainer == nil || ui.notificationSpinner == nil {
 		return
@@ -482,6 +486,8 @@ func (ui *RootUI) updateFilteredTaskItem(id widget.ListItemID, item fyne.CanvasO
 }
 
 // onFilterChanged handles filter changes from status tabs
+//
+//lint:ignore U1000 reserved for future tabbed filters
 func (ui *RootUI) onFilterChanged(filter StatusFilter) {
 	ui.currentFilter = filter
 	ui.updateFilteredTasks()
@@ -574,13 +580,12 @@ func (ui *RootUI) getAllTasks() []*model.DownloadTask {
 func (ui *RootUI) onStartPauseTask(taskID string) {
 	log.Printf("onStartPauseTask called for task %s", taskID)
 
-	task, exists := ui.downloadSvc.GetTask(taskID)
-	if !exists {
+	task, ok := ui.downloadSvc.GetTask(taskID)
+	if !ok {
 		// Fallback to lookup by YouTube video ID for playlist rows
 		if t2, ok := ui.downloadSvc.GetTaskByVideoID(taskID); ok {
 			log.Printf("Mapped videoID %s to internal task %s", taskID, t2.ID)
 			task = t2
-			exists = true
 			taskID = t2.ID
 		} else {
 			log.Printf("Task %s not found", taskID)
@@ -727,7 +732,7 @@ func (ui *RootUI) onRemoveTask(taskID string) {
 				if j != i {
 					item, err := ui.tasks.GetValue(j)
 					if err == nil {
-						newTasks.Append(item)
+						_ = newTasks.Append(item)
 					}
 				}
 			}
@@ -792,7 +797,9 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 				wasCompleted = true
 				log.Printf("Task %s completed, OutputPath: %s", task.ID, task.OutputPath)
 			}
-			ui.tasks.SetValue(i, task)
+			if err := ui.tasks.SetValue(i, task); err != nil {
+				log.Printf("failed to update binding for id=%s: %v", task.ID, err)
+			}
 			log.Printf("Binding updated for id=%s (status=%s percent=%d progress=%.2f)",
 				task.ID, task.Status, task.Percent, task.Progress)
 			break
