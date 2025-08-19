@@ -82,10 +82,41 @@ jobs:
         with:
           path: ./artifacts
 
+      - name: Prepare release files (rename and flatten)
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+
+          # Collect and rename artifacts to a consistent scheme
+          find artifacts -type f \( -name "*.tar.xz" -o -name "*.zip" -o -name "*.apk" \) | while read -r f; do
+            base="$(basename "$f")"
+            ext="${base##*.}"
+            label="unknown"
+
+            case "$f" in
+              *linux*amd64*|*linux-amd64*|*linux/amd64*) label="linux_amd64" ;;
+              *linux*arm64*|*linux-arm64*|*linux/arm64*) label="linux_arm64" ;;
+              *windows*amd64*|*windows-amd64*|*windows/amd64*) label="windows_amd64" ;;
+              *windows*386*|*windows-386*|*windows/386*) label="windows_386" ;;
+              *android*arm64*|*android-arm64*) label="android_arm64" ;;
+              *android*arm*|*android-arm*) label="android_arm" ;;
+              *android*amd64*|*android-amd64*) label="android_amd64" ;;
+              *android*386*|*android-386*|*android/386*) label="android_386" ;;
+              *.app.zip|*darwin*|*macos*|*darwin-local*) label="darwin" ;;
+            esac
+
+            out="yt-downloader_v${VERSION}_${label}.${ext}"
+            cp "$f" "release/$out"
+            echo "Prepared: release/$out"
+          done
+
+          echo "Generating checksums..."
+          (cd release && shasum -a 256 * > SHA256SUMS.txt)
+
       - name: Generate checksums
         run: |
-          cd artifacts
-          find . -type f -print0 | xargs -0 shasum -a 256 > SHA256SUMS.txt
+          echo "(migrated) checksums already generated in ./release/SHA256SUMS.txt"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -95,7 +126,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            artifacts/**
+            release/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
