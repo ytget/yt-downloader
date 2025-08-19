@@ -526,24 +526,34 @@ func (pg *PlaylistGroup) UpdateVideoStatusByURL(videoURL string, status interfac
 						updated = true
 					}
 				} else if newTaskStatus, ok := status.(model.TaskStatus); ok {
-					mapped := model.VideoStatusPending
 					switch newTaskStatus {
 					case model.TaskStatusDownloading, model.TaskStatusStarting:
-						mapped = model.VideoStatusDownloading
+						if video.Status != model.VideoStatusDownloading {
+							video.Status = model.VideoStatusDownloading
+							updated = true
+						}
 					case model.TaskStatusPaused:
-						mapped = model.VideoStatusPaused
+						if video.Status != model.VideoStatusPaused {
+							video.Status = model.VideoStatusPaused
+							updated = true
+						}
 					case model.TaskStatusCompleted:
-						mapped = model.VideoStatusCompleted
+						if video.Status != model.VideoStatusCompleted {
+							video.Status = model.VideoStatusCompleted
+							updated = true
+						}
 					case model.TaskStatusError:
-						mapped = model.VideoStatusError
+						if video.Status != model.VideoStatusError {
+							video.Status = model.VideoStatusError
+							updated = true
+						}
 					case model.TaskStatusStopped:
-						mapped = model.VideoStatusSkipped
+						if video.Status != model.VideoStatusSkipped {
+							video.Status = model.VideoStatusSkipped
+							updated = true
+						}
 					default:
-						mapped = model.VideoStatusPending
-					}
-					if video.Status != mapped {
-						video.Status = mapped
-						updated = true
+						// keep as is
 					}
 				}
 				break

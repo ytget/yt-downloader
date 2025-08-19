@@ -1,0 +1,133 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install tools
+        run: |
+          go install fyne.io/tools/cmd/fyne@latest
+          go install github.com/fyne-io/fyne-cross@latest
+
+      - name: Build (Linux/Windows/Android)
+        run: |
+          export VERSION="${GITHUB_REF_NAME#v}"
+          make build-linux-amd64
+          make build-windows-amd64
+          make build-android
+
+      - name: Upload artifacts (ubuntu)
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-ubuntu
+          path: fyne-cross/dist/**
+          if-no-files-found: error
+
+  build-darwin:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install tools
+        run: |
+          go install fyne.io/tools/cmd/fyne@latest
+          go install github.com/fyne-io/fyne-cross@latest
+
+      - name: Build (macOS)
+        run: |
+          export VERSION="${GITHUB_REF_NAME#v}"
+          make package-darwin
+          make collect-artifacts
+
+      - name: Upload artifacts (darwin)
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-darwin
+          path: |
+            fyne-cross/dist/**
+            dist/**
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [build-ubuntu, build-darwin]
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Prepare release files (rename and flatten)
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+
+          # Collect and rename artifacts to a consistent scheme
+          find artifacts -type f \( -name "*.tar.xz" -o -name "*.zip" -o -name "*.apk" \) | while read -r f; do
+            base="$(basename "$f")"
+            ext="${base##*.}"
+            label="unknown"
+
+            case "$f" in
+              *linux*amd64*|*linux-amd64*|*linux/amd64*) label="linux_amd64" ;;
+              *linux*arm64*|*linux-arm64*|*linux/arm64*) label="linux_arm64" ;;
+              *windows*amd64*|*windows-amd64*|*windows/amd64*) label="windows_amd64" ;;
+              *windows*386*|*windows-386*|*windows/386*) label="windows_386" ;;
+              *android*arm64*|*android-arm64*) label="android_arm64" ;;
+              *android*arm*|*android-arm*) label="android_arm" ;;
+              *android*amd64*|*android-amd64*) label="android_amd64" ;;
+              *android*386*|*android-386*|*android/386*) label="android_386" ;;
+              *.app.zip|*darwin*|*macos*|*darwin-local*) label="darwin" ;;
+            esac
+
+            out="yt-downloader_v${VERSION}_${label}.${ext}"
+            cp "$f" "release/$out"
+            echo "Prepared: release/$out"
+          done
+
+          echo "Generating checksums..."
+          (cd release && shasum -a 256 * > SHA256SUMS.txt)
+
+      - name: Generate checksums
+        run: |
+          echo "(migrated) checksums already generated in ./release/SHA256SUMS.txt"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            release/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
