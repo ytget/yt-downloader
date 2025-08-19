@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 
@@ -10,6 +12,9 @@ import (
 	"github.com/ytget/yt-downloader/internal/platform"
 	"github.com/ytget/yt-downloader/internal/ui"
 )
+
+// Version is set during build via -ldflags "-X main.version=X.Y.Z"
+var version = "dev"
 
 const (
 	AppID   = "com.ytget.yt-downloader"
@@ -21,13 +26,17 @@ const (
 )
 
 func main() {
+	// Log version information
+	fmt.Printf("YT Downloader v%s starting...\n", version)
+
 	// Create new Fyne app
 	myApp := app.NewWithID(AppID)
 
 	// Apply compact theme
 	myApp.Settings().SetTheme(ui.NewCompactTheme())
 
-	myWindow := myApp.NewWindow(AppName)
+	windowTitle := fmt.Sprintf("%s v%s", AppName, version)
+	myWindow := myApp.NewWindow(windowTitle)
 	myWindow.Resize(fyne.NewSize(WindowWidth, WindowHeight))
 
 	// Initialize services

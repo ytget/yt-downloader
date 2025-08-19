@@ -43,3 +43,12 @@ Thumbs.db
 
 # Project specific
 changelog*
+
+# Cross-build artifacts
+fyne-cross/
+dist/
+
+# Local logs and app bundles
+debug.log
+*.app
+*.dmg
