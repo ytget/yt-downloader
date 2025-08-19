@@ -1,0 +1,67 @@
+name: build
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+
+jobs:
+  linux-win-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for proper versioning
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install fyne tools
+        run: |
+          go install fyne.io/fyne/v2/cmd/fyne@latest
+          go install github.com/fyne-io/fyne-cross@latest
+      - name: Build Linux
+        run: |
+          VERSION=${GITHUB_SHA::7}
+          fyne-cross linux --arch=amd64,arm64,arm --name yt-downloader --icon Icon.png --output dist --ldflags "-X main.version=${VERSION}"
+      - name: Build Windows
+        run: |
+          VERSION=${GITHUB_SHA::7}
+          fyne-cross windows --arch=386,amd64 --name yt-downloader --icon Icon.png --output dist --ldflags "-X main.version=${VERSION}"
+      - name: Build Android
+        run: |
+          VERSION=${GITHUB_SHA::7}
+          fyne-cross android --arch=arm64,arm,amd64,386 --name yt-downloader --icon Icon.png --app-id com.ytget.yt-downloader --output dist --ldflags "-X main.version=${VERSION}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytdl-linux-win-android
+          path: |
+            fyne-cross/bin/**
+            dist/**
+
+  darwin-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for proper versioning
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install fyne tools
+        run: |
+          go install fyne.io/fyne/v2/cmd/fyne@latest
+          go install github.com/fyne-io/fyne-cross@latest
+      - name: Build macOS
+        run: |
+          VERSION=${GITHUB_SHA::7}
+          fyne-cross darwin --arch=amd64,arm64 --name yt-downloader --icon Icon.png --app-id com.ytget.yt-downloader --output dist --ldflags "-X main.version=${VERSION}"
+      - name: Build iOS (unsigned)
+        run: |
+          VERSION=${GITHUB_SHA::7}
+          fyne-cross ios --name yt-downloader --icon Icon.png --app-id com.ytget.yt-downloader --output dist --no-sign --ldflags "-X main.version=${VERSION}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytdl-darwin-ios
+          path: |
+            fyne-cross/bin/**
+            dist/**
+
