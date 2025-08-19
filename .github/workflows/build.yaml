@@ -48,7 +48,10 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.58.2
+          install-mode: go
           args: --timeout=5m --out-format=github-actions ./...
+        env:
+          CGO_ENABLED: 1
 
       - name: Test
         run: make test
