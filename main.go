@@ -42,7 +42,9 @@ func main() {
 	// Initialize services
 	settings := config.NewSettings(myApp)
 	downloadsDir := settings.GetDownloadDirectory()
-	platform.CreateDirectoryIfNotExists(downloadsDir)
+	if err := platform.CreateDirectoryIfNotExists(downloadsDir); err != nil {
+		fmt.Printf("failed to ensure downloads dir: %v\n", err)
+	}
 
 	downloadSvc := download.NewService(downloadsDir, settings.GetMaxParallelDownloads())
 	compressSvc := compress.NewService()
