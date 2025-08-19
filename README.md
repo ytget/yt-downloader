@@ -1,5 +1,7 @@
 # yt-downloader
 
+[![GitHub release](https://img.shields.io/github/v/release/romanitalian/yt-downloader?sort=semver)](https://github.com/romanitalian/yt-downloader/releases)
+
 Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust yt-dlp integration.
 
 <div align="center">
@@ -35,6 +37,7 @@ Lightweight cross‑platform desktop app to download YouTube videos and playlist
 - [Diagnostics and issue reporting](#diagnostics-and-issue-reporting)
 - [FAQ](#faq)
 - [Legal note](#legal-note)
+- [Open Source & License](#open-source--license)
 - [Roadmap (high level)](#roadmap-high-level)
 - [Contributing](#contributing)
 - [Acknowledgements](#acknowledgements)
@@ -194,12 +197,62 @@ Before filing an issue, please:
 ### Legal note
 This tool is intended for downloading content you have the rights to access. Respect platform Terms of Service and local laws.
 
+### Open Source & License
+- Purpose: deliver a friendly, cross‑platform GUI for downloading videos/playlists using Fyne and yt-dlp, with focus on stability and UX.
+- License: MIT (see `LICENSE`).
+- Versioning: SemVer; releases are cut from tags `v*` (e.g., `v1.2.3`).
+- Transparency: roadmap and changes via GitHub Issues/PRs and release notes.
+- Security: report vulnerabilities privately (e.g., GitHub security advisories).
+
 ### Contributing
-Contributions are welcome! Please:
-- Open issues for bugs and feature requests.
-- Submit pull requests with focused changes and clear descriptions.
-- Keep code readable and follow Go best practices.
-- Prefer explicit error handling; avoid unnecessary reflection/generics; do not use `panic`.
+We welcome community contributions. Please follow the guidelines below.
+
+- Requirements
+  - Go: version from `go.mod`.
+  - yt-dlp: must be in `PATH`, or download locally with `make deps`.
+  - Recommended: `ffmpeg` in `PATH` for muxing/format conversions.
+
+- Quick start (development)
+  - Install dependencies: `make deps`
+  - Run the app: `make run` (or `make debug` to tee logs)
+  - Tests and lint: `make test` and `make lint`
+  - Compile binary: `make build` (outputs to `bin/`)
+
+- Branches and commits
+  - Branches: `feature/<ticket-or-topic>`, `hotfix/<ticket>`, `release/<version>`
+  - Commits: Conventional Commits + task ID when applicable. Example:
+    - `feat(PRJCT-13121): worker - fix time intervals (stability)`
+  - Keep messages short, in English.
+
+- Code style and rules
+  - Avoid `panic`; avoid `reflect`, `runtime`, `any/interface{}`; generics only when clearly justified.
+  - Propagate storage/database errors upward; do not swallow errors.
+  - Prefer `strings.Builder` for concatenation; for simple logs use `fmt.Sprintf`.
+  - Use clear names; early returns; explicit error handling.
+  - Formatting: `make format`; linting: `make lint`.
+
+- PR checklist
+  - `make lint` and `make test` are green.
+  - No unnecessary files/artifacts committed (`bin/`, `dist/`, `fyne-cross/` are ignored).
+  - Changes are focused and well-described in the PR.
+
+- How PRs are validated (CI)
+  - Workflow: `.github/workflows/build.yaml`
+    - Triggers: `pull_request` and `push` to `main`, `release/**`, `hotfix/**`, `feature/**` (docs are ignored via `paths-ignore`)
+    - Steps: `make lint`, `make test`, quick compile check `make build`
+    - `concurrency` cancels outdated runs on new pushes to the same ref
+  - Releases: `.github/workflows/release.yaml` (on tags `v*`)
+    - Cross-builds (Linux/Windows/Android/macOS), artifact aggregation
+    - Version embedded from tag: `-ldflags -X main.version=${GITHUB_REF_NAME#v}`
+    - `SHA256SUMS.txt` generated and attached to GitHub Release
+
+- How to help
+  - Report issues with logs (`make debug`), OS/Go versions, `yt-dlp --version`, and reproducible URLs.
+  - Propose improvements: UX, localization, tests, docs.
+  - Smaller PRs are easier to review.
+
+- Code of Conduct
+  - Be respectful. Friendly, focused collaboration is appreciated.
 
 ### Acknowledgements
 - `yt-dlp` — the heart of extraction.
