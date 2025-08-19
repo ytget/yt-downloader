@@ -316,3 +316,4 @@ Version embedding: all builds inject version with `-ldflags -X main.version=<val
 Example artifact globs:
 - `fyne-cross/dist/**`
 - `dist/**` (if `make collect-artifacts` is used in CI)
+
