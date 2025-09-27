@@ -5,7 +5,7 @@ Website = "https://github.com/ytget/yt-downloader"
   Name = "YT Downloader"
   ID = "com.github.ytget.ytdownloader"
   Version = "1.0.0"
-  Build = 22
+  Build = 205
 
 [LinuxAndBSD]
   GenericName = "YouTube Video Downloader"

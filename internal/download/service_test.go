@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ytget/yt-downloader/internal/model"
+	"github.com/ytget/ytdlp"
 )
 
 func TestNewService(t *testing.T) {
@@ -201,4 +202,86 @@ func TestGenerateTaskID(t *testing.T) {
 	if len(id2) != len("task-")+36 {
 		t.Errorf("Expected ID length %d, got %d for ID: %s", len("task-")+36, len(id2), id2)
 	}
+}
+
+func TestSmoothingState(t *testing.T) {
+	// Test SmoothingState methods
+	state := &SmoothingState{
+		speedMeasurements:   make([]float64, 0, 10),
+		percentMeasurements: make([]int, 0, 10),
+	}
+
+	// Add some test measurements
+	state.addMeasurement(1.5, 25) // 1.5 MB/s, 25%
+	state.addMeasurement(2.0, 30) // 2.0 MB/s, 30%
+	state.addMeasurement(1.8, 35) // 1.8 MB/s, 35%
+
+	// Calculate smoothed values
+	speedStr, percent := state.calculateSmoothedValues()
+
+	// Check speed (average of 1.5, 2.0, 1.8 = 1.77)
+	expectedSpeed := "1.8MB/s"
+	if speedStr != expectedSpeed {
+		t.Errorf("Expected speed '%s', got '%s'", expectedSpeed, speedStr)
+	}
+
+	// Check percent (average of 25, 30, 35 = 30)
+	expectedPercent := 30
+	if percent != expectedPercent {
+		t.Errorf("Expected percent %d, got %d", expectedPercent, percent)
+	}
+
+	// Test clearing measurements
+	state.clearMeasurements()
+	if len(state.speedMeasurements) != 0 {
+		t.Errorf("Expected empty speed measurements after clear, got %d", len(state.speedMeasurements))
+	}
+	if len(state.percentMeasurements) != 0 {
+		t.Errorf("Expected empty percent measurements after clear, got %d", len(state.percentMeasurements))
+	}
+}
+
+func TestSmoothingIntegration(t *testing.T) {
+	service := NewService("/tmp", 1).(*Service)
+
+	// Add a task
+	task, err := service.AddTask("https://youtube.com/watch?v=test")
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	// Start smoothing timer
+	service.startSmoothingTimer(task.ID)
+
+	// Simulate progress updates
+	progress := ytdlp.Progress{
+		TotalSize:      1000000, // 1MB
+		DownloadedSize: 100000,  // 100KB
+	}
+
+	// Update progress multiple times to accumulate measurements
+	for i := 0; i < 5; i++ {
+		service.updateTaskProgressFromNew(task, progress)
+		progress.DownloadedSize += 50000  // Add 50KB each time
+		time.Sleep(10 * time.Millisecond) // Small delay
+	}
+
+	// Wait for smoothing timer to trigger
+	time.Sleep(1100 * time.Millisecond)
+
+	// Check that smoothing state exists
+	service.smoothingMutex.RLock()
+	state, exists := service.smoothingState[task.ID]
+	service.smoothingMutex.RUnlock()
+
+	if !exists {
+		t.Error("Expected smoothing state to exist for task")
+	}
+
+	if state == nil {
+		t.Error("Expected smoothing state to be non-nil")
+	}
+
+	// Stop smoothing timer
+	service.stopSmoothingTimer(task.ID)
 }

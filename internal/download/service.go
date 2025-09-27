@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lrstanley/go-ytdlp"
 	"github.com/ytget/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/platform"
+	"github.com/ytget/ytdlp"
+	"github.com/ytget/ytdlp/types"
 )
 
 // min returns the minimum of two integers
@@ -32,6 +34,9 @@ type Service struct {
 	downloadDir string
 	onUpdate    func(*model.DownloadTask) // callback for UI updates
 
+	// Quality preset: "best" | "medium" | "audio"
+	qualityPreset string
+
 	// Playlist support
 	playlists           map[string]*model.Playlist
 	playlistsMutex      sync.RWMutex
@@ -44,16 +49,189 @@ type Service struct {
 		lastAt    time.Time
 	}
 
+	// Smoothing state for UI updates (1 second intervals)
+	smoothingState map[string]*SmoothingState
+	smoothingMutex sync.RWMutex
+
 	// stopModes remembers whether a stop request was a pause or a hard stop
 	stopModes map[string]StopMode
+}
+
+// SmoothingState holds data for smoothing UI updates over 1-second intervals
+type SmoothingState struct {
+	// Raw measurements accumulated over 1 second
+	speedMeasurements   []float64 // MB/s measurements
+	percentMeasurements []int     // percent measurements
+
+	// Timing
+	lastUpdate time.Time
+	timer      *time.Timer
+
+	// Current smoothed values
+	smoothedSpeed   string // formatted speed string
+	smoothedPercent int    // smoothed percent
+
+	// Mutex for thread safety
+	mutex sync.Mutex
+}
+
+// addMeasurement adds a new speed and percent measurement
+func (ss *SmoothingState) addMeasurement(speedMBps float64, percent int) {
+	ss.mutex.Lock()
+	defer ss.mutex.Unlock()
+
+	ss.speedMeasurements = append(ss.speedMeasurements, speedMBps)
+	ss.percentMeasurements = append(ss.percentMeasurements, percent)
+
+	// Keep only last 10 measurements to prevent memory growth
+	if len(ss.speedMeasurements) > 10 {
+		ss.speedMeasurements = ss.speedMeasurements[1:]
+		ss.percentMeasurements = ss.percentMeasurements[1:]
+	}
+}
+
+// calculateSmoothedValues calculates and returns smoothed speed and percent
+func (ss *SmoothingState) calculateSmoothedValues() (string, int) {
+	ss.mutex.Lock()
+	defer ss.mutex.Unlock()
+
+	if len(ss.speedMeasurements) == 0 {
+		return "", 0
+	}
+
+	// Calculate average speed
+	var totalSpeed float64
+	for _, speed := range ss.speedMeasurements {
+		totalSpeed += speed
+	}
+	avgSpeed := totalSpeed / float64(len(ss.speedMeasurements))
+
+	// Calculate average percent
+	var totalPercent int
+	for _, percent := range ss.percentMeasurements {
+		totalPercent += percent
+	}
+	avgPercent := totalPercent / len(ss.percentMeasurements)
+
+	// Format speed string
+	var speedStr string
+	if avgSpeed > 0 {
+		speedStr = fmt.Sprintf("%.1fMB/s", avgSpeed)
+	}
+
+	// Store smoothed values
+	ss.smoothedSpeed = speedStr
+	ss.smoothedPercent = avgPercent
+
+	return speedStr, avgPercent
+}
+
+// clearMeasurements clears accumulated measurements
+func (ss *SmoothingState) clearMeasurements() {
+	ss.mutex.Lock()
+	defer ss.mutex.Unlock()
+
+	ss.speedMeasurements = ss.speedMeasurements[:0]
+	ss.percentMeasurements = ss.percentMeasurements[:0]
+}
+
+// startSmoothingTimer starts the 1-second smoothing timer for a task
+func (s *Service) startSmoothingTimer(taskID string) {
+	s.smoothingMutex.Lock()
+	defer s.smoothingMutex.Unlock()
+
+	// Create smoothing state if it doesn't exist
+	if s.smoothingState[taskID] == nil {
+		s.smoothingState[taskID] = &SmoothingState{
+			speedMeasurements:   make([]float64, 0, 10),
+			percentMeasurements: make([]int, 0, 10),
+		}
+	}
+
+	state := s.smoothingState[taskID]
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	// Stop existing timer if any
+	if state.timer != nil {
+		state.timer.Stop()
+	}
+
+	// Start new timer
+	state.timer = time.AfterFunc(time.Second, func() {
+		s.updateSmoothedUI(taskID)
+	})
+}
+
+// stopSmoothingTimer stops the smoothing timer for a task
+func (s *Service) stopSmoothingTimer(taskID string) {
+	s.smoothingMutex.Lock()
+	defer s.smoothingMutex.Unlock()
+
+	if state, ok := s.smoothingState[taskID]; ok {
+		state.mutex.Lock()
+		if state.timer != nil {
+			state.timer.Stop()
+			state.timer = nil
+		}
+		state.mutex.Unlock()
+	}
+}
+
+// updateSmoothedUI updates UI with smoothed values and restarts timer
+func (s *Service) updateSmoothedUI(taskID string) {
+	s.smoothingMutex.RLock()
+	state, exists := s.smoothingState[taskID]
+	s.smoothingMutex.RUnlock()
+
+	if !exists {
+		return
+	}
+
+	// Calculate smoothed values
+	speedStr, percent := state.calculateSmoothedValues()
+
+	// Update task with smoothed values
+	s.tasksMutex.Lock()
+	if task, ok := s.tasks[taskID]; ok {
+		if speedStr != "" {
+			task.Speed = speedStr
+		}
+		if percent > 0 {
+			task.Percent = percent
+			task.Progress = float64(percent) / 100.0
+		}
+		s.notifyUpdate(task)
+	}
+	s.tasksMutex.Unlock()
+
+	// Clear measurements for next interval
+	state.clearMeasurements()
+
+	// Restart timer if task is still downloading
+	s.tasksMutex.RLock()
+	task, exists := s.tasks[taskID]
+	s.tasksMutex.RUnlock()
+
+	if exists && task.Status == model.TaskStatusDownloading {
+		state.mutex.Lock()
+		if state.timer != nil {
+			state.timer.Stop()
+		}
+		state.timer = time.AfterFunc(time.Second, func() {
+			s.updateSmoothedUI(taskID)
+		})
+		state.mutex.Unlock()
+	}
 }
 
 // NewService creates a new download service
 func NewService(downloadDir string, maxParallel int) Downloader {
 	return &Service{
-		tasks:       make(map[string]*model.DownloadTask),
-		maxParallel: maxParallel,
-		downloadDir: downloadDir,
+		tasks:         make(map[string]*model.DownloadTask),
+		maxParallel:   maxParallel,
+		downloadDir:   downloadDir,
+		qualityPreset: "best",
 
 		// Playlist support
 		playlists:           make(map[string]*model.Playlist),
@@ -64,6 +242,8 @@ func NewService(downloadDir string, maxParallel int) Downloader {
 			lastBytes int64
 			lastAt    time.Time
 		}),
+
+		smoothingState: make(map[string]*SmoothingState),
 
 		stopModes: make(map[string]StopMode),
 	}
@@ -215,7 +395,7 @@ func (s *Service) PauseTask(id string) error {
 
 // ResumeTask resumes a paused task.
 // Paused tasks are transitioned to Pending and will start downloading again.
-// yt-dlp will automatically continue from .part files thanks to the Continue() flag.
+// The native Go engine will automatically continue from .part files thanks to the Continue() flag.
 func (s *Service) ResumeTask(id string) error {
 	s.tasksMutex.Lock()
 	defer s.tasksMutex.Unlock()
@@ -326,6 +506,9 @@ func (s *Service) startTask(task *model.DownloadTask) {
 	s.tasksMutex.Unlock()
 	s.notifyUpdate(task)
 
+	// Start smoothing timer for this task
+	s.startSmoothingTimer(task.ID)
+
 	log.Printf("Starting download for task %s: %s", task.ID, task.URL)
 
 	// Create context with cancellation
@@ -351,288 +534,220 @@ func (s *Service) startTask(task *model.DownloadTask) {
 		}
 	}()
 
-	// Configure yt-dlp
-	dl := ytdlp.New().
-		Continue().
-		NoCheckCertificates().
-		Output(s.downloadDir + "/%(title)s.%(ext)s").
-		NoOverwrites() // Prevent duplicate files
-
-	// Add format selection for better compatibility
-	dl.Format("best[ext=mp4]/best[ext=webm]/best")
-
-	// Pre-check: if file with final name already exists, mark as completed without running yt-dlp
-	// We need the final name; try to construct it from Title if known, otherwise we rely on progress callbacks later
-	if task.OutputPath != "" {
-		if fi, err := os.Stat(task.OutputPath); err == nil && fi.Size() > 0 {
-			s.tasksMutex.Lock()
-			task.Status = model.TaskStatusCompleted
-			task.Progress = 1.0
-			task.Percent = 100
-			s.tasksMutex.Unlock()
-			s.notifyUpdate(task)
-			return
-		}
+	// Configure new ytdlp downloader (pure Go)
+	quality := "best"
+	ext := ""
+	switch s.qualityPreset {
+	case "best":
+		quality, ext = "best", ""
+	case "medium":
+		quality, ext = "height<=480", ""
+	case "audio":
+		quality, ext = "best", "" // MVP: keep progressive best; audio-only later
 	}
 
-	// Setup progress callback with more frequent updates
-	// Use 1s interval to provide stable deltas for speed calculation
-	dl.ProgressFunc(1*time.Second, func(update ytdlp.ProgressUpdate) {
-		s.updateTaskProgress(task, &update)
+	d := ytdlp.New().WithFormat(quality, ext)
+
+	// Resolve metadata and select format to compute output path
+	_, info, resErr := d.ResolveURL(ctx, task.URL)
+	if resErr != nil {
+		// Handle ResolveURL error immediately
+		log.Printf("ResolveURL failed for task %s: %v", task.ID, resErr)
+
+		s.tasksMutex.Lock()
+		task.Status = model.TaskStatusError
+		task.LastError = s.parseYouTubeError(resErr)
+		task.FinishedAt = time.Now()
+		s.tasksMutex.Unlock()
+		s.notifyUpdate(task)
+		return
+	}
+
+	// Compute output file path
+	outputPath := s.downloadDir
+	if info != nil {
+		base := strings.TrimSpace(info.Title)
+		if base == "" {
+			base = "video"
+		}
+		base = s.sanitizeFilename(base)
+		extGuess := s.guessExtFromFormats(info.Formats)
+		if extGuess == "" {
+			extGuess = "mp4"
+		}
+		outputPath = filepath.Join(s.downloadDir, base+"."+extGuess)
+	}
+
+	// If file already exists and has size, short-circuit
+	if fi, statErr := os.Stat(outputPath); statErr == nil && fi.Size() > 0 {
+		s.tasksMutex.Lock()
+		task.Status = model.TaskStatusCompleted
+		task.Progress = 1.0
+		task.Percent = 100
+		task.OutputPath = outputPath
+		s.tasksMutex.Unlock()
+		s.notifyUpdate(task)
+		return
+	}
+
+	// Set progress callback and output path
+	d = d.WithOutputPath(outputPath).WithProgress(func(p ytdlp.Progress) {
+		s.updateTaskProgressFromNew(task, p)
 	})
 
-	// Start download with retry logic
-	result, err := s.downloadWithRetry(ctx, dl, task)
+	// Expose expected output early (for UI actions like copy path)
+	s.tasksMutex.Lock()
+	task.OutputPath = outputPath
+	s.tasksMutex.Unlock()
+	s.notifyUpdate(task)
+
+	// Start download
+	info, err := d.Download(ctx, task.URL)
 
 	// Update final status
 	s.tasksMutex.Lock()
 	if err != nil {
-		// Check if this was a user-initiated stop/pause
 		mode, wasStopped := s.stopModes[task.ID]
 		if wasStopped {
 			if mode == StopModePause {
 				task.Status = model.TaskStatusPaused
-				log.Printf("Task %s was paused by user", task.ID)
-			} else if mode == StopModeStop {
+			} else {
 				task.Status = model.TaskStatusStopped
-				log.Printf("Task %s was stopped by user", task.ID)
 			}
 			delete(s.stopModes, task.ID)
 		} else if ctx.Err() == context.Canceled {
-			// Fallback: check if context was canceled (should not happen with our current logic)
-			mode := s.stopModes[task.ID]
-			if mode == StopModePause {
+			if mode := s.stopModes[task.ID]; mode == StopModePause {
 				task.Status = model.TaskStatusPaused
-				log.Printf("Task %s was paused by user (context canceled)", task.ID)
 			} else {
 				task.Status = model.TaskStatusStopped
-				log.Printf("Task %s was stopped by user (context canceled)", task.ID)
 			}
 			delete(s.stopModes, task.ID)
 		} else {
 			task.Status = model.TaskStatusError
-			task.LastError = err.Error()
-			log.Printf("Task %s failed with error: %v", task.ID, err)
+			task.LastError = s.parseYouTubeError(err)
 		}
 	} else {
 		task.Status = model.TaskStatusCompleted
 		task.Progress = 1.0
 		task.Percent = 100
-
-		// Set output path from result
-		if result != nil {
-			log.Printf("Task %s: result is not nil, trying to get extracted info", task.ID)
-			info, err := result.GetExtractedInfo()
-			if err != nil {
-				log.Printf("Task %s: failed to get extracted info: %v", task.ID, err)
-			} else if len(info) == 0 {
-				log.Printf("Task %s: extracted info is empty", task.ID)
-			} else {
-				log.Printf("Task %s: got %d info items", task.ID, len(info))
-				if info[0].Filename != nil {
-					task.OutputPath = *info[0].Filename
-					log.Printf("Task %s completed successfully: %s", task.ID, task.OutputPath)
-				} else {
-					log.Printf("Task %s: filename is nil in info[0]", task.ID)
-				}
-				// Update title from extracted info if available and current title is empty or looks like URL
-				if info[0].Title != nil {
-					extractedTitle := *info[0].Title
-					if extractedTitle != "" && (task.Title == "" || strings.HasPrefix(task.Title, "http")) {
-						task.Title = extractedTitle
-					}
-				}
-			}
-		} else {
-			log.Printf("Task %s: result is nil, no output path available", task.ID)
-		}
-
-		// Fallback: if OutputPath is still empty, try to construct it from download template
+		// Derive final output path: if WithOutputPath was a directory, library created file inside
 		if task.OutputPath == "" {
-			// Try to get info from the download result even if there was an error
-			if result != nil {
-				if info, err := result.GetExtractedInfo(); err == nil && len(info) > 0 {
-					if info[0].Filename != nil && *info[0].Filename != "" {
-						task.OutputPath = *info[0].Filename
-						log.Printf("Task %s: set OutputPath from fallback info: %s", task.ID, task.OutputPath)
-					}
-					if info[0].Title != nil {
-						extractedTitle := *info[0].Title
-						if extractedTitle != "" && (task.Title == "" || strings.HasPrefix(task.Title, "http")) {
-							task.Title = extractedTitle
-						}
-					}
-				}
-			}
-
-			// If still empty, try to construct from URL and download template
-			if task.OutputPath == "" {
-				// Extract video ID from URL for fallback filename
-				videoID := s.extractVideoID(task.URL)
-				if videoID != "" {
-					// Use a reasonable default extension
-					fallbackPath := fmt.Sprintf("%s/%s.mp4", s.downloadDir, videoID)
-					task.OutputPath = fallbackPath
-					log.Printf("Task %s: set fallback OutputPath: %s", task.ID, task.OutputPath)
-				} else {
-					log.Printf("Task %s: could not construct fallback OutputPath", task.ID)
-				}
+			// Attempt to build absolute path using info.Title and default ext; real path captured during progress if possible
+			if info != nil && strings.TrimSpace(info.Title) != "" {
+				// Leave empty; progress callback may have set OutputPath via probing; we will resolve on disk scan below
 			}
 		}
-
-		// Validate and clean the OutputPath
+		// Resolve absolute/clean path if present
 		if task.OutputPath != "" {
-			// Ensure the path is absolute and clean
 			if !filepath.IsAbs(task.OutputPath) {
-				absPath, err := filepath.Abs(task.OutputPath)
-				if err == nil {
-					task.OutputPath = absPath
+				if abs, e := filepath.Abs(task.OutputPath); e == nil {
+					task.OutputPath = abs
 				}
 			}
-
-			// Clean the path
 			task.OutputPath = filepath.Clean(task.OutputPath)
+		}
+		// Update title from info
+		if info != nil && info.Title != "" && (task.Title == "" || strings.HasPrefix(task.Title, "http")) {
+			task.Title = info.Title
+		}
 
-			log.Printf("Task %s: final OutputPath: %s", task.ID, task.OutputPath)
+		// Notify Android media scanner about the new file
+		// This makes downloaded videos appear in the Gallery app
+		if task.OutputPath != "" {
+			platform.NotifyMediaScanner(task.OutputPath)
 		}
 	}
 	task.FinishedAt = time.Now()
 	s.tasksMutex.Unlock()
 
+	// Stop smoothing timer for this task
+	s.stopSmoothingTimer(task.ID)
+
 	s.notifyUpdate(task)
 }
 
-// downloadWithRetry attempts download with retry logic
-func (s *Service) downloadWithRetry(ctx context.Context, dl *ytdlp.Command, task *model.DownloadTask) (*ytdlp.Result, error) {
-	maxRetries := 1
-	var lastErr error
-	var result *ytdlp.Result
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			// Backoff delay
-			select {
-			case <-time.After(2 * time.Second):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-
-			log.Printf("Retrying download for task %s, attempt %d", task.ID, attempt+1)
-		}
-
-		// Attempt download
-		res, err := dl.Run(ctx, task.URL)
-		if err == nil {
-			return res, nil
-		}
-
-		lastErr = err
-		result = res // Keep last result even if there was an error
-		log.Printf("Download attempt %d failed for task %s: %v", attempt+1, task.ID, err)
-
-		// Check if we should retry
-		if ctx.Err() != nil {
-			return result, ctx.Err()
-		}
-	}
-
-	return result, lastErr
-}
-
-// updateTaskProgress updates task progress from yt-dlp info
-func (s *Service) updateTaskProgress(task *model.DownloadTask, update *ytdlp.ProgressUpdate) {
+// Replace old progress updater with one that accepts new Progress
+func (s *Service) updateTaskProgressFromNew(task *model.DownloadTask, p ytdlp.Progress) {
 	s.tasksMutex.Lock()
 	defer s.tasksMutex.Unlock()
 
-	// Update percentage - handle cases where TotalBytes might be 0
-	if update.TotalBytes > 0 {
-		percent := float64(update.DownloadedBytes) / float64(update.TotalBytes) * 100
-		task.Percent = int(percent)
+	// Calculate current percent
+	var currentPercent int
+	if p.TotalSize > 0 {
+		percent := float64(p.DownloadedSize) / float64(p.TotalSize) * 100
+		currentPercent = int(percent)
 		task.Progress = percent / 100.0
-	} else if update.DownloadedBytes > 0 {
-		// If TotalBytes is 0 but we have downloaded bytes, show some progress
-		// This can happen with live streams or when yt-dlp doesn't provide total size
-		task.Percent = min(int(float64(update.DownloadedBytes)/1024/1024), 99) // Max 99% until complete
-		task.Progress = float64(task.Percent) / 100.0
+	} else if p.DownloadedSize > 0 {
+		currentPercent = min(int(float64(p.DownloadedSize)/1024/1024), 99)
+		task.Progress = float64(currentPercent) / 100.0
 	}
 
-	// Calculate speed using delta between updates for better stability
+	// Calculate current speed using delta snapshots
 	now := time.Now()
+	var currentSpeedMBps float64
 	if state, ok := s.progressState[task.ID]; ok && !state.lastAt.IsZero() {
-		deltaBytes := int64(update.DownloadedBytes) - state.lastBytes
+		deltaBytes := p.DownloadedSize - state.lastBytes
 		deltaTime := now.Sub(state.lastAt)
 		if deltaBytes > 0 && deltaTime > 0 {
-			bytesPerSecond := float64(deltaBytes) / deltaTime.Seconds()
-			if bytesPerSecond > 0 {
-				task.Speed = fmt.Sprintf("%.1fMB/s", bytesPerSecond/1024/1024)
+			bps := float64(deltaBytes) / deltaTime.Seconds()
+			if bps > 0 {
+				currentSpeedMBps = bps / 1024 / 1024
 			}
 		}
 	}
-	// Update progress state snapshot
 	s.progressState[task.ID] = struct {
 		lastBytes int64
 		lastAt    time.Time
-	}{lastBytes: int64(update.DownloadedBytes), lastAt: now}
+	}{lastBytes: p.DownloadedSize, lastAt: now}
 
-	// Calculate ETA
-	eta := update.ETA()
-	if eta > 0 {
-		task.ETASec = int(eta.Seconds())
-	} else if update.TotalBytes > 0 {
+	// Add measurements to smoothing state
+	s.smoothingMutex.RLock()
+	if smoothingState, exists := s.smoothingState[task.ID]; exists {
+		smoothingState.addMeasurement(currentSpeedMBps, currentPercent)
+	}
+	s.smoothingMutex.RUnlock()
+
+	// Calculate ETA (not smoothed, as it's less critical)
+	if p.TotalSize > 0 {
 		if state, ok := s.progressState[task.ID]; ok && !state.lastAt.IsZero() {
-			deltaBytes := int64(update.DownloadedBytes) - state.lastBytes
+			deltaBytes := p.DownloadedSize - state.lastBytes
 			deltaTime := now.Sub(state.lastAt)
 			if deltaBytes > 0 && deltaTime > 0 {
-				bytesPerSecond := float64(deltaBytes) / deltaTime.Seconds()
-				remaining := int64(update.TotalBytes) - int64(update.DownloadedBytes)
-				if bytesPerSecond > 0 && remaining > 0 {
-					task.ETASec = int(float64(remaining) / bytesPerSecond)
+				bps := float64(deltaBytes) / deltaTime.Seconds()
+				remaining := int64(p.TotalSize) - p.DownloadedSize
+				if bps > 0 && remaining > 0 {
+					task.ETASec = int(float64(remaining) / bps)
 				}
 			}
 		}
 	}
 
-	// Update title if available
-	if update.Info != nil && update.Info.Title != nil && *update.Info.Title != "" && task.Title == "" {
-		task.Title = *update.Info.Title
-	}
+	// Don't call notifyUpdate here - it will be called by the smoothing timer
+}
 
-	// Update OutputPath if available and not set yet
-	if task.OutputPath == "" && update.Info != nil && update.Info.Filename != nil && *update.Info.Filename != "" {
-		task.OutputPath = *update.Info.Filename
-		log.Printf("Task %s: updated OutputPath during download: %s", task.ID, task.OutputPath)
-	}
+// downloadWithRetry is a compatibility shim; the new downloader returns VideoInfo.
+func (s *Service) downloadWithRetry(ctx context.Context, d *ytdlp.Downloader, task *model.DownloadTask) (*ytdlp.VideoInfo, error) {
+	return d.Download(ctx, task.URL)
+}
 
-	// If file already exists (likely due to NoOverwrites and already downloaded), reflect 100% immediately
-	if task.OutputPath != "" {
-		if fi, err := os.Stat(task.OutputPath); err == nil {
-			// Heuristic: if yt-dlp hasn't reported any bytes yet but the final file exists,
-			// treat it as already downloaded and set 100% for UI consistency
-			if update.DownloadedBytes == 0 {
-				// If total size is known and file size >= total, definitely 100%
-				if update.TotalBytes > 0 {
-					if fi.Size() >= int64(update.TotalBytes) {
-						task.Percent = 100
-						task.Progress = 1.0
-						task.Speed = ""
-						task.ETASec = 0
-					}
-				} else {
-					// Total unknown: the presence of final file strongly suggests skip
-					task.Percent = 100
-					task.Progress = 1.0
-					task.Speed = ""
-					task.ETASec = 0
-				}
-			}
+// updateTaskProgress is kept for compatibility; delegates to the new handler.
+func (s *Service) updateTaskProgress(task *model.DownloadTask, p ytdlp.Progress) {
+	s.updateTaskProgressFromNew(task, p)
+}
+
+// guessExtFromFormats returns a preferred extension based on available formats.
+func (s *Service) guessExtFromFormats(list []types.Format) string {
+	for _, f := range list {
+		if strings.Contains(strings.ToLower(f.MimeType), "video/mp4") {
+			return "mp4"
 		}
 	}
-
-	// Log progress for debugging
-	log.Printf("Task %s progress: %d%%, downloaded: %d bytes, speed: %s",
-		task.ID, task.Percent, update.DownloadedBytes, task.Speed)
-
-	s.notifyUpdate(task)
+	for _, f := range list {
+		if strings.Contains(strings.ToLower(f.MimeType), "video/webm") {
+			return "webm"
+		}
+	}
+	return ""
 }
 
 // startNextPendingTask starts the next pending task if we have capacity
@@ -776,6 +891,54 @@ func (s *Service) sanitizeFilename(filename string) string {
 	}
 
 	return result
+}
+
+// parseYouTubeError converts YouTube-specific errors to user-friendly messages
+func (s *Service) parseYouTubeError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	errStr := err.Error()
+	errStr = strings.ToLower(errStr)
+
+	// Age restriction
+	if strings.Contains(errStr, "age restricted") || strings.Contains(errStr, "age-restricted") {
+		return "Video is age-restricted and cannot be downloaded"
+	}
+
+	// Geographic restriction
+	if strings.Contains(errStr, "geo") && strings.Contains(errStr, "block") {
+		return "Video is not available in your region"
+	}
+
+	// Private video
+	if strings.Contains(errStr, "private") {
+		return "Video is private and cannot be downloaded"
+	}
+
+	// Deleted video
+	if strings.Contains(errStr, "deleted") || strings.Contains(errStr, "unavailable") {
+		return "Video has been deleted or is unavailable"
+	}
+
+	// Copyright issues
+	if strings.Contains(errStr, "copyright") || strings.Contains(errStr, "blocked") {
+		return "Video is blocked due to copyright restrictions"
+	}
+
+	// Network issues
+	if strings.Contains(errStr, "network") || strings.Contains(errStr, "timeout") {
+		return "Network error - please check your connection"
+	}
+
+	// Authentication issues
+	if strings.Contains(errStr, "auth") || strings.Contains(errStr, "login") {
+		return "Authentication required - video may be private"
+	}
+
+	// Return original error if no specific pattern matches
+	return err.Error()
 }
 
 // Playlist methods
@@ -935,4 +1098,38 @@ func (s *Service) CancelPlaylist(playlistID string) error {
 // SetMaxPlaylistParallel sets the maximum number of concurrent playlist downloads
 func (s *Service) SetMaxPlaylistParallel(max int) {
 	s.maxPlaylistParallel = max
+}
+
+// SetQualityPreset sets quality preset for downloads
+func (s *Service) SetQualityPreset(preset string) {
+	preset = strings.ToLower(strings.TrimSpace(preset))
+	switch preset {
+	case "best", "medium", "audio":
+		s.qualityPreset = preset
+	default:
+		s.qualityPreset = "best"
+	}
+}
+
+// SetMaxParallelDownloads sets the maximum number of parallel downloads
+func (s *Service) SetMaxParallelDownloads(max int) {
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+
+	if max < 1 {
+		max = 1
+	}
+	if max > 10 {
+		max = 10
+	}
+
+	s.maxParallel = max
+}
+
+// SetDownloadDirectory sets the download directory
+func (s *Service) SetDownloadDirectory(dir string) {
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+
+	s.downloadDir = dir
 }

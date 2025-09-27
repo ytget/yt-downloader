@@ -63,8 +63,9 @@ func (p *PlaylistParserService) ParsePlaylist(ctx context.Context, url string) (
 	}
 	playlist.ID = playlistID
 
-	// Parse playlist using yt-dlp or similar tool
-	videos, err := p.parsePlaylistVideos(ctx, url)
+	// Parse playlist using library-based parser
+	y := NewYTDLPParserService()
+	libPlaylist, err := y.ParsePlaylist(ctx, url)
 	if err != nil {
 		playlist.Error = err.Error()
 		playlist.UpdateStatus(model.PlaylistStatusError)
@@ -72,13 +73,13 @@ func (p *PlaylistParserService) ParsePlaylist(ctx context.Context, url string) (
 	}
 
 	// Add videos to playlist
-	for _, video := range videos {
+	for _, video := range libPlaylist.Videos {
 		playlist.AddVideo(video)
 	}
 
-	// Set playlist title (extract from first video or use default)
-	if len(videos) > 0 {
-		playlist.Title = p.extractPlaylistTitle(videos)
+	// Set playlist title
+	if len(libPlaylist.Videos) > 0 {
+		playlist.Title = p.extractPlaylistTitle(libPlaylist.Videos)
 	} else {
 		playlist.Title = fmt.Sprintf("Playlist %s", playlistID)
 	}
@@ -130,9 +131,12 @@ func (p *PlaylistParserService) extractPlaylistID(url string) (string, error) {
 
 // parsePlaylistVideos parses the actual video list from the playlist
 func (p *PlaylistParserService) parsePlaylistVideos(ctx context.Context, url string) ([]*model.PlaylistVideo, error) {
-	// Delegate to real yt-dlp based parser for production behavior
 	y := NewYTDLPParserService()
-	return y.parsePlaylistVideos(ctx, url)
+	pl, err := y.ParsePlaylist(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	return pl.Videos, nil
 }
 
 // extractPlaylistTitle extracts a meaningful title for the playlist
