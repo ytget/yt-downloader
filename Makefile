@@ -183,8 +183,7 @@ build-android: ## Cross-build Android (arm64, arm)
 	  --app-id $(APP_ID) \
 	  --output $(OUTPUT_DIR) \
 	  --metadata "appName=$(APP_DISPLAY_NAME)" \
-	  --ldflags '-X=main.version=$(VERSION)' \
-	  --dir $(PWD)
+	  --ldflags '-X=main.version=$(VERSION)'
 
 ##@ Android Device (USB)
 
