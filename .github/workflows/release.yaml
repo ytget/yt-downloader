@@ -61,21 +61,17 @@ jobs:
       - name: Install tools
         run: |
           go install fyne.io/tools/cmd/fyne@latest
-          go install github.com/fyne-io/fyne-cross@latest
 
       - name: Build (macOS)
         run: |
           export VERSION="${GITHUB_REF_NAME#v}"
-          make package-darwin
-          make collect-artifacts
+          make package-darwin-native
 
       - name: Upload artifacts (darwin)
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-darwin
-          path: |
-            fyne-cross/dist/**
-            dist/**
+          path: dist/**
           if-no-files-found: error
 
   publish:
