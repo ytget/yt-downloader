@@ -92,6 +92,29 @@ build-macos: ## Cross-build macOS (amd64, arm64)
 	  --output $(OUTPUT_DIR) \
 	  --ldflags '-X=main.version=$(VERSION)'
 
+.PHONY: package-darwin
+package-darwin: ## Package macOS app bundles
+	@echo "Packaging macOS app bundles..."
+	@make build-macos
+	@# Create zip archives for each architecture
+	@if [ -d "fyne-cross/dist/darwin-amd64" ]; then \
+		cd fyne-cross/dist/darwin-amd64 && zip -r ../../$(BINARY_NAME)-amd64.app.zip $(BINARY_NAME).app; \
+	fi
+	@if [ -d "fyne-cross/dist/darwin-arm64" ]; then \
+		cd fyne-cross/dist/darwin-arm64 && zip -r ../../$(BINARY_NAME)-arm64.app.zip $(BINARY_NAME).app; \
+	fi
+	@echo "macOS packages created!"
+
+.PHONY: collect-artifacts
+collect-artifacts: ## Collect all build artifacts to dist/ folder
+	@echo "Collecting build artifacts..."
+	@mkdir -p dist
+	@# Copy all built files to dist/
+	@find fyne-cross/dist -name "*.tar.xz" -o -name "*.zip" -o -name "*.apk" -o -name "*.app.zip" | while read -r file; do \
+		cp "$$file" dist/; \
+	done
+	@echo "Artifacts collected to dist/"
+
 .PHONY: build-linux
 build-linux: ## Cross-build Linux (amd64, arm64)
 	@go install github.com/fyne-io/fyne-cross@latest
@@ -104,6 +127,26 @@ build-linux: ## Cross-build Linux (amd64, arm64)
 
 .PHONY: build-windows
 build-windows: ## Cross-build Windows (amd64)
+	@go install github.com/fyne-io/fyne-cross@latest
+	@fyne-cross windows \
+	  --arch=amd64 \
+	  --name $(BINARY_NAME) \
+	  --icon $(ICON) \
+	  --output $(OUTPUT_DIR) \
+	  --ldflags '-X=main.version=$(VERSION)'
+
+.PHONY: build-linux-amd64
+build-linux-amd64: ## Cross-build Linux (amd64 only)
+	@go install github.com/fyne-io/fyne-cross@latest
+	@fyne-cross linux \
+	  --arch=amd64 \
+	  --name $(BINARY_NAME) \
+	  --icon $(ICON) \
+	  --output $(OUTPUT_DIR) \
+	  --ldflags '-X=main.version=$(VERSION)'
+
+.PHONY: build-windows-amd64
+build-windows-amd64: ## Cross-build Windows (amd64 only)
 	@go install github.com/fyne-io/fyne-cross@latest
 	@fyne-cross windows \
 	  --arch=amd64 \
