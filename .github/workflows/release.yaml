@@ -25,6 +25,10 @@ jobs:
         run: |
           go install fyne.io/tools/cmd/fyne@latest
           go install github.com/fyne-io/fyne-cross@latest
+          
+      - name: Setup fyne-cross environment
+        run: |
+          fyne-cross setup
 
       - name: Build (Linux/Windows/Android)
         run: |
@@ -53,10 +57,19 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      - name: Install Xcode command line tools
+        run: |
+          xcode-select --install || true
+          sudo xcode-select --switch /Library/Developer/CommandLineTools || true
+
       - name: Install tools
         run: |
           go install fyne.io/tools/cmd/fyne@latest
           go install github.com/fyne-io/fyne-cross@latest
+          
+      - name: Setup fyne-cross environment
+        run: |
+          fyne-cross setup
 
       - name: Build (macOS)
         run: |
