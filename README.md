@@ -74,6 +74,12 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
   <img src="./screenshots/screen-01-playlist-downloading.jpeg" alt="Playlist downloading UI" width="720" />
   <br/>
   <img src="./screenshots/screen-02-settings.jpeg" alt="Settings dialog" width="720" />
+  <br/><br/>
+  <strong>Android version</strong>
+  <br/>
+  <img src="./screenshots/screen-03-android-downloaded-list.jpg" alt="Android - Downloaded list" width="360" />
+  <br/>
+  <img src="./screenshots/screen-04-android-downloading-in-progress.jpg" alt="Android - Downloading in progress" width="360" />
   <br/>
   <sub>Screens may vary slightly depending on OS and theme.</sub>
 </div>
