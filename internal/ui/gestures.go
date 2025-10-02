@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/mobile"
 )
 
@@ -166,7 +167,7 @@ type PullToRefreshWidget struct {
 // NewPullToRefreshWidget creates a new pull-to-refresh widget
 func NewPullToRefreshWidget(content fyne.CanvasObject, refreshFunc func()) *PullToRefreshWidget {
 	ptr := &PullToRefreshWidget{
-		Container:   fyne.NewContainer(content),
+		Container:   container.NewWithoutLayout(content),
 		refreshFunc: refreshFunc,
 	}
 

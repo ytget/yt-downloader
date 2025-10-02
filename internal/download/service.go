@@ -64,8 +64,7 @@ type SmoothingState struct {
 	percentMeasurements []int     // percent measurements
 
 	// Timing
-	lastUpdate time.Time
-	timer      *time.Timer
+	timer *time.Timer
 
 	// Current smoothed values
 	smoothedSpeed   string // formatted speed string
@@ -632,10 +631,8 @@ func (s *Service) startTask(task *model.DownloadTask) {
 		task.Percent = 100
 		// Derive final output path: if WithOutputPath was a directory, library created file inside
 		if task.OutputPath == "" {
-			// Attempt to build absolute path using info.Title and default ext; real path captured during progress if possible
-			if info != nil && strings.TrimSpace(info.Title) != "" {
-				// Leave empty; progress callback may have set OutputPath via probing; we will resolve on disk scan below
-			}
+			// Progress callback may have set OutputPath via probing; we will resolve on disk scan below
+			_ = info // info is available for potential future use
 		}
 		// Resolve absolute/clean path if present
 		if task.OutputPath != "" {
@@ -654,7 +651,7 @@ func (s *Service) startTask(task *model.DownloadTask) {
 		// Notify Android media scanner about the new file
 		// This makes downloaded videos appear in the Gallery app
 		if task.OutputPath != "" {
-			platform.NotifyMediaScanner(task.OutputPath)
+			_ = platform.NotifyMediaScanner(task.OutputPath)
 		}
 	}
 	task.FinishedAt = time.Now()
@@ -725,15 +722,6 @@ func (s *Service) updateTaskProgressFromNew(task *model.DownloadTask, p ytdlp.Pr
 	// Don't call notifyUpdate here - it will be called by the smoothing timer
 }
 
-// downloadWithRetry is a compatibility shim; the new downloader returns VideoInfo.
-func (s *Service) downloadWithRetry(ctx context.Context, d *ytdlp.Downloader, task *model.DownloadTask) (*ytdlp.VideoInfo, error) {
-	return d.Download(ctx, task.URL)
-}
-
-// updateTaskProgress is kept for compatibility; delegates to the new handler.
-func (s *Service) updateTaskProgress(task *model.DownloadTask, p ytdlp.Progress) {
-	s.updateTaskProgressFromNew(task, p)
-}
 
 // guessExtFromFormats returns a preferred extension based on available formats.
 func (s *Service) guessExtFromFormats(list []types.Format) string {
