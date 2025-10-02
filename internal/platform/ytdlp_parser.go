@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/ytget/yt-downloader/internal/model"
-	"github.com/ytget/ytdlp"
+	"github.com/ytget/ytdlp/v2"
 )
 
 // Timeout constants
