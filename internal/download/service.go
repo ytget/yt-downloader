@@ -722,7 +722,6 @@ func (s *Service) updateTaskProgressFromNew(task *model.DownloadTask, p ytdlp.Pr
 	// Don't call notifyUpdate here - it will be called by the smoothing timer
 }
 
-
 // guessExtFromFormats returns a preferred extension based on available formats.
 func (s *Service) guessExtFromFormats(list []types.Format) string {
 	for _, f := range list {

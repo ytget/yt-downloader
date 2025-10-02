@@ -129,7 +129,6 @@ func (p *PlaylistParserService) extractPlaylistID(url string) (string, error) {
 	return playlistID, nil
 }
 
-
 // extractPlaylistTitle extracts a meaningful title for the playlist
 func (p *PlaylistParserService) extractPlaylistTitle(videos []*model.PlaylistVideo) string {
 	if len(videos) == 0 {
