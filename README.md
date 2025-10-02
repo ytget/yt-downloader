@@ -117,18 +117,41 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
   - Optional but recommended: `ffmpeg` installed in PATH for muxing/format conversions.
 
 ### Installation
-- Clone the repo and run the application.
-- The app runs without additional system services. All dependencies are Go modules; UI uses Fyne.
-- Install binary into your Go bin:
 
-```
-make install
+#### Download pre-built binaries
+
+Go to the [Releases page](https://github.com/ytget/yt-downloader/releases) and download the latest version for your platform:
+
+- **macOS**: `yt-downloader_vX.X.X_darwin.zip` - unzip and drag `.app` to Applications
+- **Linux (amd64)**: `yt-downloader_vX.X.X_linux_amd64.tar.xz` - extract and run
+- **Windows (amd64)**: `yt-downloader_vX.X.X_windows_amd64.zip` - extract and run `.exe`
+- **Android**: `yt-downloader_vX.X.X_android_arm64.apk` - download and install APK
+  - For older devices: `yt-downloader_vX.X.X_android_arm.apk`
+
+#### Build from source
+
+If you want to build from source:
+
+1. Clone the repository:
+```bash
+git clone https://github.com/ytget/yt-downloader.git
+cd yt-downloader
 ```
 
-- Install dependencies:
-
-```
+2. Install dependencies:
+```bash
 make deps
+```
+
+3. Run the app:
+```bash
+make run
+```
+
+4. Or build binary:
+```bash
+make build
+# Binary will be in bin/yt-downloader
 ```
 
 ### Quick start
