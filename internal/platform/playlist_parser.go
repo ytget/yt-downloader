@@ -129,15 +129,6 @@ func (p *PlaylistParserService) extractPlaylistID(url string) (string, error) {
 	return playlistID, nil
 }
 
-// parsePlaylistVideos parses the actual video list from the playlist
-func (p *PlaylistParserService) parsePlaylistVideos(ctx context.Context, url string) ([]*model.PlaylistVideo, error) {
-	y := NewYTDLPParserService()
-	pl, err := y.ParsePlaylist(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-	return pl.Videos, nil
-}
 
 // extractPlaylistTitle extracts a meaningful title for the playlist
 func (p *PlaylistParserService) extractPlaylistTitle(videos []*model.PlaylistVideo) string {
