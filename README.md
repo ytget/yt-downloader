@@ -70,17 +70,25 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
 
 ### Screenshots
 
+#### Desktop (macOS, Linux, Windows)
+
 <div align="center">
-  <img src="./screenshots/screen-01-playlist-downloading.jpeg" alt="Playlist downloading UI" width="720" />
-  <br/>
-  <img src="./screenshots/screen-02-settings.jpeg" alt="Settings dialog" width="720" />
+  <p><strong>Playlist downloading with live progress tracking</strong></p>
+  <img src="./screenshots/screen-01-playlist-downloading.jpeg" alt="Playlist downloading UI" width="720" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
   <br/><br/>
-  <strong>Android version</strong>
-  <br/>
-  <img src="./screenshots/screen-03-android-downloaded-list.jpg" alt="Android - Downloaded list" width="360" />
-  <br/>
-  <img src="./screenshots/screen-04-android-downloading-in-progress.jpg" alt="Android - Downloading in progress" width="360" />
-  <br/>
+  <p><strong>Settings dialog with quality presets and localization</strong></p>
+  <img src="./screenshots/screen-02-settings.jpeg" alt="Settings dialog" width="720" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
+</div>
+
+#### Mobile (Android)
+
+<div align="center">
+  <p><strong>Completed downloads list</strong></p>
+  <img src="./screenshots/screen-03-android-downloaded-list.jpg" alt="Android - Downloaded list" width="360" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
+  <br/><br/>
+  <p><strong>Download in progress with speed and ETA</strong></p>
+  <img src="./screenshots/screen-04-android-downloading-in-progress.jpg" alt="Android - Downloading in progress" width="360" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
+  <br/><br/>
   <sub>Screens may vary slightly depending on OS and theme.</sub>
 </div>
 
