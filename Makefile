@@ -114,8 +114,8 @@ package-darwin-native: ## Package macOS app bundle (native build, no Docker)
 		--icon "$(ICON)" \
 		--release \
 		--os darwin \
-		--appVersion "$(VERSION)" \
-		--appBuild "$(VERSION)"
+		--app-version "$(VERSION)" \
+		--app-build 1
 	@# Move to dist directory and create zip
 	@if [ -d "$(BINARY_NAME).app" ]; then \
 		zip -r "dist/$(BINARY_NAME).app.zip" "$(BINARY_NAME).app"; \
