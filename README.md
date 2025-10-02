@@ -5,7 +5,7 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/ytget/yt-downloader)](https://github.com/ytget/yt-downloader)
 [![GitHub release](https://img.shields.io/github/v/release/ytget/yt-downloader?sort=semver)](https://github.com/ytget/yt-downloader/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)](https://github.com/ytget/yt-downloader)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows%20%7C%20Android-blue)](https://github.com/ytget/yt-downloader)
 [![GitHub issues](https://img.shields.io/github/issues/ytget/yt-downloader)](https://github.com/ytget/yt-downloader/issues)
 [![GitHub stars](https://img.shields.io/github/stars/ytget/yt-downloader?style=social)](https://github.com/ytget/yt-downloader/stargazers)
 
@@ -82,6 +82,7 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
 - macOS 12+
 - Linux (X11/Wayland)
 - Windows 10/11
+- Android 7.0+ (arm, arm64)
 
 ### Architecture overview
 - UI: Fyne (`internal/ui`) with a unified playlist view and task rows.
