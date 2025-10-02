@@ -1,9 +1,13 @@
 # yt-downloader
 
+[![Build Status](https://github.com/ytget/yt-downloader/actions/workflows/build.yaml/badge.svg)](https://github.com/ytget/yt-downloader/actions/workflows/build.yaml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ytget/yt-downloader)](https://goreportcard.com/report/github.com/ytget/yt-downloader)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/ytget/yt-downloader)](https://github.com/ytget/yt-downloader)
 [![GitHub release](https://img.shields.io/github/v/release/ytget/yt-downloader?sort=semver)](https://github.com/ytget/yt-downloader/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)](https://github.com/ytget/yt-downloader)
+[![GitHub issues](https://img.shields.io/github/issues/ytget/yt-downloader)](https://github.com/ytget/yt-downloader/issues)
+[![GitHub stars](https://img.shields.io/github/stars/ytget/yt-downloader?style=social)](https://github.com/ytget/yt-downloader/stargazers)
 
 Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust native Go integration.
 
