@@ -105,6 +105,24 @@ package-darwin: ## Package macOS app bundles
 	fi
 	@echo "macOS packages created!"
 
+.PHONY: package-darwin-native
+package-darwin-native: ## Package macOS app bundle (native build, no Docker)
+	@echo "Building native macOS app bundle..."
+	@mkdir -p dist
+	@fyne package \
+		--name "$(BINARY_NAME)" \
+		--icon "$(ICON)" \
+		--release \
+		--os darwin \
+		--appVersion "$(VERSION)" \
+		--appBuild "$(VERSION)"
+	@# Move to dist directory and create zip
+	@if [ -d "$(BINARY_NAME).app" ]; then \
+		zip -r "dist/$(BINARY_NAME).app.zip" "$(BINARY_NAME).app"; \
+		rm -rf "$(BINARY_NAME).app"; \
+	fi
+	@echo "Native macOS package created: dist/$(BINARY_NAME).app.zip"
+
 .PHONY: collect-artifacts
 collect-artifacts: ## Collect all build artifacts to dist/ folder
 	@echo "Collecting build artifacts..."
