@@ -5,7 +5,7 @@ SHELL:=bash
 # App metadata
 APP_ID ?= com.github.ytget.ytdownloader
 BINARY_NAME ?= yt-downloader
-APP_DISPLAY_NAME ?= "YT Downloader"
+APP_DISPLAY_NAME ?= YTDownloader
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 ICON ?= Icon.png
 OUTPUT_DIR ?= dist
