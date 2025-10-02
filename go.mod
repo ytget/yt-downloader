@@ -5,7 +5,8 @@ go 1.24.6
 require (
 	fyne.io/fyne/v2 v2.6.2
 	github.com/google/uuid v1.6.0
-	github.com/ytget/ytdlp v0.0.0-20250910095247-52c07bfd7896
+	github.com/ytget/ytdlp v0.1.0
+	github.com/ytget/ytdlp/v2 v2.0.0
 )
 
 require (

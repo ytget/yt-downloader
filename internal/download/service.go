@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/ytget/yt-downloader/internal/model"
 	"github.com/ytget/yt-downloader/internal/platform"
-	"github.com/ytget/ytdlp"
 	"github.com/ytget/ytdlp/types"
+	"github.com/ytget/ytdlp/v2"
 )
 
 // min returns the minimum of two integers

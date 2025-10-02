@@ -79,8 +79,10 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
-github.com/ytget/ytdlp v0.0.0-20250910095247-52c07bfd7896 h1:fXbwTHotWluEje8oKRCt+QIexLtMLBdWdNXEDIoj6lY=
-github.com/ytget/ytdlp v0.0.0-20250910095247-52c07bfd7896/go.mod h1:/j4he3pNWXkd2+54c3VaZhJflQCk12GaNZkSm7g7bM0=
+github.com/ytget/ytdlp v0.1.0 h1:QkAFGZkE8yGG2Y3BBqyk617g3+flhDgQnTT6pPx1UQo=
+github.com/ytget/ytdlp v0.1.0/go.mod h1:/j4he3pNWXkd2+54c3VaZhJflQCk12GaNZkSm7g7bM0=
+github.com/ytget/ytdlp/v2 v2.0.0 h1:SKAdlCFiFWJpCcPPKbM5DlGealYHBE97Sv+lwvW2J18=
+github.com/ytget/ytdlp/v2 v2.0.0/go.mod h1:zQgojg9q2dFLETz42jq2E8xs5Yt0tbU7qg5B2YMy6Fs=
 github.com/yuin/goldmark v1.7.13 h1:GPddIs617DnBLFFVJFgpo1aBfe/4xcvMc3SB5t/D0pA=
 github.com/yuin/goldmark v1.7.13/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
 golang.org/x/image v0.30.0 h1:jD5RhkmVAnjqaCUXfbGBrn3lpxbknfN9w2UhHHU+5B4=

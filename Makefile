@@ -5,6 +5,7 @@ SHELL:=bash
 # App metadata
 APP_ID ?= com.github.ytget.ytdownloader
 BINARY_NAME ?= yt-downloader
+APP_DISPLAY_NAME ?= "YT Downloader"
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 ICON ?= Icon.png
 OUTPUT_DIR ?= dist
@@ -81,6 +82,16 @@ clean: ## Clean build artifacts
 
 ##@ Cross-platform Build
 
+.PHONY: build-macos
+build-macos: ## Cross-build macOS (amd64, arm64)
+	@go install github.com/fyne-io/fyne-cross@latest
+	@fyne-cross darwin \
+	  --arch=amd64,arm64 \
+	  --name $(BINARY_NAME) \
+	  --icon $(ICON) \
+	  --output $(OUTPUT_DIR) \
+	  --ldflags '-X=main.version=$(VERSION)'
+
 .PHONY: build-linux
 build-linux: ## Cross-build Linux (amd64, arm64)
 	@go install github.com/fyne-io/fyne-cross@latest
@@ -106,11 +117,13 @@ build-android: ## Cross-build Android (arm64, arm)
 	@go install github.com/fyne-io/fyne-cross@latest
 	@fyne-cross android \
 	  --arch=arm64,arm \
-	  --name $(BINARY_NAME) \
+	  --name $(APP_DISPLAY_NAME) \
 	  --icon $(ICON) \
 	  --app-id $(APP_ID) \
 	  --output $(OUTPUT_DIR) \
-	  --ldflags '-X=main.version=$(VERSION)'
+	  --metadata "appName=$(APP_DISPLAY_NAME)" \
+	  --ldflags '-X=main.version=$(VERSION)' \
+	  --dir $(PWD)
 
 ##@ Android Device (USB)
 
@@ -193,6 +206,87 @@ android-device-logs: ## View logs from Android device
 		exit 1; \
 	fi
 	@adb logcat | grep -E "(com.github.ytget.ytdownloader|ytdlp|Download|Error|Exception|Fatal)"
+
+##@ macOS Installation
+
+# macOS Installation Guide:
+# - Build app: make macos-build
+# - Install app: make macos-install
+# - Create DMG: make macos-dmg
+# - Uninstall app: make macos-uninstall
+
+.PHONY: macos-build
+macos-build: ## Build macOS app bundle (.app)
+	@echo "Building macOS app bundle..."
+	@make build-macos
+	@echo "macOS app built successfully!"
+
+.PHONY: macos-install
+macos-install: macos-build ## Install macOS app to Applications folder
+	@echo "Installing macOS app to Applications folder..."
+	@if [ ! -d "fyne-cross/dist/darwin-arm64" ] && [ ! -d "fyne-cross/dist/darwin-amd64" ]; then \
+		echo "Error: No macOS build found. Run 'make macos-build' first."; \
+		exit 1; \
+	fi
+	@# Detect architecture and install appropriate app
+	@if [ -d "fyne-cross/dist/darwin-arm64" ]; then \
+		app_path="fyne-cross/dist/darwin-arm64/$(BINARY_NAME).app"; \
+		echo "Installing ARM64 version: $$app_path"; \
+	elif [ -d "fyne-cross/dist/darwin-amd64" ]; then \
+		app_path="fyne-cross/dist/darwin-amd64/$(BINARY_NAME).app"; \
+		echo "Installing AMD64 version: $$app_path"; \
+	fi
+	@if [ -d "$$app_path" ]; then \
+		echo "Copying app to /Applications/..."; \
+		sudo cp -R "$$app_path" "/Applications/"; \
+		echo "App installed successfully!"; \
+		echo "You can find it in Applications folder or Launchpad."; \
+	else \
+		echo "Error: App bundle not found at $$app_path"; \
+		exit 1; \
+	fi
+
+.PHONY: macos-uninstall
+macos-uninstall: ## Uninstall macOS app from Applications folder
+	@echo "Uninstalling macOS app from Applications folder..."
+	@if [ -d "/Applications/$(BINARY_NAME).app" ]; then \
+		echo "Removing /Applications/$(BINARY_NAME).app..."; \
+		sudo rm -rf "/Applications/$(BINARY_NAME).app"; \
+		echo "App uninstalled successfully!"; \
+	else \
+		echo "App not found in Applications folder."; \
+	fi
+
+.PHONY: macos-dmg
+macos-dmg: macos-build ## Create DMG installer for macOS
+	@echo "Creating DMG installer..."
+	@if [ ! -d "fyne-cross/dist/darwin-arm64" ] && [ ! -d "fyne-cross/dist/darwin-amd64" ]; then \
+		echo "Error: No macOS build found. Run 'make macos-build' first."; \
+		exit 1; \
+	fi
+	@# Detect architecture and create DMG
+	@if [ -d "fyne-cross/dist/darwin-arm64" ]; then \
+		app_path="fyne-cross/dist/darwin-arm64/$(BINARY_NAME).app"; \
+		dmg_name="$(BINARY_NAME)-$(VERSION)-arm64.dmg"; \
+	elif [ -d "fyne-cross/dist/darwin-amd64" ]; then \
+		app_path="fyne-cross/dist/darwin-amd64/$(BINARY_NAME).app"; \
+		dmg_name="$(BINARY_NAME)-$(VERSION)-amd64.dmg"; \
+	fi
+	@if [ -d "$$app_path" ]; then \
+		echo "Creating DMG: $$dmg_name"; \
+		hdiutil create -volname "$(BINARY_NAME)" -srcfolder "$$app_path" -ov -format UDZO "$$dmg_name"; \
+		echo "DMG created: $$dmg_name"; \
+	else \
+		echo "Error: App bundle not found at $$app_path"; \
+		exit 1; \
+	fi
+
+.PHONY: macos-clean
+macos-clean: ## Clean macOS build artifacts and DMG files
+	@echo "Cleaning macOS artifacts..."
+	@rm -f *.dmg
+	@rm -rf fyne-cross/dist/darwin-*
+	@echo "macOS artifacts cleaned!"
 
 ##@ Android Emulator
 
@@ -310,3 +404,15 @@ i: ## Install binary
 .PHONY: c
 c: ## Clean artifacts
 	@make clean
+
+.PHONY: macos
+macos: ## Build macOS app
+	@make macos-build
+
+.PHONY: install-macos
+install-macos: ## Install macOS app
+	@make macos-install
+
+.PHONY: dmg
+dmg: ## Create DMG installer
+	@make macos-dmg
