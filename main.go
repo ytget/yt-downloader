@@ -28,6 +28,11 @@ func main() {
 	// Log version information
 	fmt.Printf("YT Downloader v%s starting...\n", version)
 
+	// Initialize logo resource
+	if err := ui.InitLogoResource(); err != nil {
+		fmt.Printf("Warning: failed to initialize logo: %v\n", err)
+	}
+
 	// Create new Fyne app
 	myApp := app.NewWithID(AppID)
 
