@@ -99,6 +99,18 @@ type RootUI struct {
 	notificationContainer *fyne.Container
 	notificationLabel     *widget.Label
 	notificationSpinner   *widget.ProgressBarInfinite
+
+	// Mobile UI enhancements
+	mobileUI *MobileUI
+
+	// Quick access buttons for mobile
+	settingsBtn   *widget.Button
+	languageBtn   *widget.Button
+	languagePopup *widget.PopUp
+	titleLabel    *widget.Label
+
+	// Dialog for no app found scenario
+	noAppDialog *widget.PopUp
 }
 
 // NewRootUI creates and initializes the main UI
@@ -106,17 +118,9 @@ func NewRootUI(window fyne.Window, app fyne.App, downloadSvc download.Downloader
 	// Initialize settings
 	settings := config.NewSettings(app)
 
-	// Initialize localization
+	// Initialize localization with default language
 	localization := NewLocalization()
-	localization.SetLanguage(settings.GetLanguage())
-
-	// Get configured downloads directory
-	downloadsDir := settings.GetDownloadDirectory()
-
-	// Ensure directory exists
-	if err := platform.CreateDirectoryIfNotExists(downloadsDir); err != nil {
-		log.Printf("failed to ensure downloads dir: %v", err)
-	}
+	localization.SetLanguage("en") // Default to English, will be updated when settings are read
 
 	ui := &RootUI{
 		window:       window,
@@ -128,13 +132,17 @@ func NewRootUI(window fyne.Window, app fyne.App, downloadSvc download.Downloader
 
 		// Initialize playlist services
 		parserService: platform.NewYTDLPParserService(),
+
+		// Initialize mobile UI
+		mobileUI: NewMobileUI(app),
 	}
 
 	// Verify that all callbacks are properly initialized
 	log.Printf("RootUI initialized with download service: %v", ui.downloadSvc != nil)
 
-	// Set window title
-	window.SetTitle(localization.GetText(KeyAppTitle))
+	// Set window title with version timestamp
+	version := time.Now().Format("2006-01-02 15:04:05")
+	window.SetTitle(fmt.Sprintf("%s v%s", localization.GetText(KeyAppTitle), version))
 
 	// Set up callback for download updates
 	ui.downloadSvc.SetUpdateCallback(ui.onTaskUpdate)
@@ -148,21 +156,29 @@ func (ui *RootUI) setupUI() {
 	// Create menu
 	ui.createMenu()
 
-	// Create URL entry
-	ui.urlEntry = widget.NewEntry()
-	ui.urlEntry.SetPlaceHolder(ui.localization.GetText(KeyEnterURL))
+	// Create URL entry with mobile optimizations
+	ui.urlEntry = ui.mobileUI.CreateMobileEntry(ui.localization.GetText(KeyEnterURL))
 	ui.urlEntry.Validator = ui.validateURL
 	// Trigger download when user presses Enter in the URL field
 	ui.urlEntry.OnSubmitted = func(string) {
 		ui.onDownloadClick()
 	}
 
-	// Create download button
-	ui.downloadBtn = widget.NewButton(ui.localization.GetText(KeyDownload), ui.onDownloadClick)
+	// Create download button with mobile optimizations
+	ui.downloadBtn = ui.mobileUI.CreateMobileButton(ui.localization.GetText(KeyDownload), ui.onDownloadClick)
 
-	// Create settings button
-	settingsBtn := widget.NewButton(IconSettings, ui.onShowSettings)
-	settingsBtn.Importance = widget.LowImportance
+	// Create settings button with mobile optimizations
+	ui.settingsBtn = ui.mobileUI.CreateMobileButton(IconSettings, ui.onShowSettings)
+	ui.settingsBtn.Importance = widget.LowImportance
+
+	// Create language button for mobile
+	ui.languageBtn = ui.mobileUI.CreateMobileButton(IconLanguage, ui.onLanguageButtonClick)
+	ui.languageBtn.Importance = widget.LowImportance
+
+	// Create title label for mobile
+	ui.titleLabel = widget.NewLabel(ui.localization.GetText(KeyAppTitle))
+	ui.titleLabel.TextStyle = fyne.TextStyle{Bold: true}
+	ui.titleLabel.Alignment = fyne.TextAlignCenter
 
 	// Create logo
 	logo, err := LoadLogoResource()
@@ -178,10 +194,26 @@ func (ui *RootUI) setupUI() {
 
 	// Create top panel (URL row) with logo
 	var topPanel *fyne.Container
-	if logoImage != nil {
-		topPanel = container.NewBorder(nil, nil, container.NewHBox(logoImage, settingsBtn), ui.downloadBtn, ui.urlEntry)
+	if ui.mobileUI.IsMobileDevice() {
+		// For mobile, only show logo (if available) and download button
+		if logoImage != nil {
+			topPanel = container.NewBorder(nil, nil, logoImage, ui.downloadBtn, ui.urlEntry)
+		} else {
+			topPanel = container.NewBorder(nil, nil, nil, ui.downloadBtn, ui.urlEntry)
+		}
 	} else {
-		topPanel = container.NewBorder(nil, nil, container.NewHBox(settingsBtn), ui.downloadBtn, ui.urlEntry)
+		// For desktop, show logo and settings button
+		if logoImage != nil {
+			topPanel = container.NewBorder(nil, nil, container.NewHBox(logoImage, ui.settingsBtn), ui.downloadBtn, ui.urlEntry)
+		} else {
+			topPanel = container.NewBorder(nil, nil, container.NewHBox(ui.settingsBtn), ui.downloadBtn, ui.urlEntry)
+		}
+	}
+
+	// Create icon panel above URL input for mobile
+	var iconPanel *fyne.Container
+	if ui.mobileUI.IsMobileDevice() {
+		iconPanel = ui.createMobileIconPanel()
 	}
 
 	// Create notification panel under URL input (hidden by default)
@@ -193,7 +225,24 @@ func (ui *RootUI) setupUI() {
 	ui.notificationContainer.Hide()
 
 	// Combine URL row and notification panel at the top
-	topCombined := container.NewVBox(topPanel, ui.notificationContainer)
+	// Add top spacer for mobile devices to avoid system status bar overlap
+	var topCombined *fyne.Container
+	if ui.mobileUI.IsMobileDevice() {
+		// Add empty spacer at the top for mobile to avoid status bar overlap
+		topSpacer := widget.NewLabel("")
+		topSpacer.Resize(fyne.NewSize(0, 20)) // 20px top margin
+
+		// Combine spacer, icon panel, URL panel, and notification panel
+		var components []fyne.CanvasObject
+		components = append(components, topSpacer)
+		if iconPanel != nil {
+			components = append(components, iconPanel)
+		}
+		components = append(components, topPanel, ui.notificationContainer)
+		topCombined = container.NewVBox(components...)
+	} else {
+		topCombined = container.NewVBox(topPanel, ui.notificationContainer)
+	}
 
 	// Create task list (kept for individual video downloads)
 	ui.taskList = widget.NewList(
@@ -225,14 +274,27 @@ func (ui *RootUI) setupUI() {
 		ui.onRemoveTask,
 	)
 
-	// Create main layout with unified list
-	content := container.NewBorder(
-		topCombined,                  // top
-		nil,                          // bottom
-		nil,                          // left
-		nil,                          // right
-		ui.playlistGroup.Container(), // center - unified playlist view
-	)
+	// Create main layout with simple list for mobile
+	var content fyne.CanvasObject
+	if ui.mobileUI.IsMobileDevice() {
+		// Use simple task list for mobile (no complex containers)
+		content = container.NewBorder(
+			topCombined, // top
+			nil,         // bottom
+			nil,         // left
+			nil,         // right
+			ui.taskList, // center - simple list
+		)
+	} else {
+		// Use standard layout for desktop
+		content = container.NewBorder(
+			topCombined,                  // top
+			nil,                          // bottom
+			nil,                          // left
+			nil,                          // right
+			ui.playlistGroup.Container(), // center - unified playlist view
+		)
+	}
 
 	ui.window.SetContent(content)
 
@@ -242,6 +304,12 @@ func (ui *RootUI) setupUI() {
 
 // createMenu creates the application menu
 func (ui *RootUI) createMenu() {
+	// For mobile devices, we use icon buttons instead of menu
+	if ui.mobileUI.IsMobileDevice() {
+		// No menu for mobile - use icon buttons instead
+		return
+	}
+
 	// Settings menu item
 	settingsItem := fyne.NewMenuItem(ui.localization.GetText(KeySettings), ui.onShowSettings)
 
@@ -289,12 +357,20 @@ func (ui *RootUI) onLanguageChange(langCode string) {
 
 // refreshUITexts updates all UI texts with current language
 func (ui *RootUI) refreshUITexts() {
-	// Update window title
-	ui.window.SetTitle(ui.localization.GetText(KeyAppTitle))
+	// Update window title with version timestamp
+	version := time.Now().Format("2006-01-02 15:04:05")
+	ui.window.SetTitle(fmt.Sprintf("%s v%s", ui.localization.GetText(KeyAppTitle), version))
 
 	// Update UI elements
 	ui.urlEntry.SetPlaceHolder(ui.localization.GetText(KeyEnterURL))
 	ui.downloadBtn.SetText(ui.localization.GetText(KeyDownload))
+
+	// Update mobile icon buttons and title
+	if ui.mobileUI.IsMobileDevice() {
+		ui.settingsBtn.SetText(IconSettings)
+		ui.languageBtn.SetText(IconLanguage)
+		ui.titleLabel.SetText(ui.localization.GetText(KeyAppTitle))
+	}
 
 	// Refresh task list to update button texts
 	ui.taskList.Refresh()
@@ -320,6 +396,9 @@ func (ui *RootUI) validateURL(input string) error {
 
 // onDownloadClick handles the download button click
 func (ui *RootUI) onDownloadClick() {
+	// Read settings before processing download
+	ui.readAndApplySettings()
+
 	urlText := strings.TrimSpace(ui.urlEntry.Text)
 	if urlText == "" {
 		// Also reflect in notification panel
@@ -675,11 +754,95 @@ func (ui *RootUI) onOpenFile(filePath string) {
 	err := platform.OpenFileWithDefaultApp(filePath)
 	if err != nil {
 		log.Printf("Error opening file %s: %v", filePath, err)
-		widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyErrorOpeningFile)+": "+err.Error()), ui.window.Canvas())
+
+		// Check if it's a "no suitable app found" error
+		if strings.Contains(err.Error(), "no suitable app found") {
+			ui.showNoAppFoundDialog(filePath)
+		} else {
+			widget.ShowPopUp(widget.NewLabel(ui.localization.GetText(KeyErrorOpeningFile)+": "+err.Error()), ui.window.Canvas())
+		}
 		return
 	}
 
 	log.Printf("File opened successfully: %s", filePath)
+}
+
+// showNoAppFoundDialog shows a dialog with alternative actions when no suitable app is found
+func (ui *RootUI) showNoAppFoundDialog(filePath string) {
+	log.Printf("Showing no app found dialog for: %s", filePath)
+
+	// Create dialog content
+	titleLabel := widget.NewLabel("No Media Player Found")
+	titleLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+	messageLabel := widget.NewLabel("No media player found on this device.\nYou can view the file path or copy it to open manually.")
+	messageLabel.Wrapping = fyne.TextWrapWord
+
+	// Create action buttons
+	openInFilesBtn := widget.NewButton("📁 Show File Path", func() {
+		log.Printf("User chose to show file path: %s", filePath)
+		// Show file path in a popup instead of trying to open file manager
+		pathLabel := widget.NewLabel(filePath)
+		pathLabel.Wrapping = fyne.TextWrapWord
+		pathLabel.TextStyle = fyne.TextStyle{Monospace: true}
+
+		copyBtn := widget.NewButton("📋 Copy Path", func() {
+			ui.onCopyPath(filePath)
+		})
+		copyBtn.Importance = widget.HighImportance
+
+		closeBtn := widget.NewButton("❌ Close", func() {
+			// Close the popup
+		})
+
+		content := container.NewVBox(
+			widget.NewLabel("File location:"),
+			pathLabel,
+			container.NewHBox(copyBtn, closeBtn),
+		)
+
+		popup := widget.NewModalPopUp(content, ui.window.Canvas())
+		popup.Resize(fyne.NewSize(400, 200))
+		popup.Show()
+
+		// Close the main dialog
+		if ui.noAppDialog != nil {
+			ui.noAppDialog.Hide()
+		}
+	})
+	openInFilesBtn.Importance = widget.HighImportance
+
+	copyPathBtn := widget.NewButton("📋 Copy Path", func() {
+		log.Printf("User chose to copy path: %s", filePath)
+		ui.onCopyPath(filePath)
+		if ui.noAppDialog != nil {
+			ui.noAppDialog.Hide()
+		}
+	})
+	copyPathBtn.Importance = widget.MediumImportance
+
+	cancelBtn := widget.NewButton("❌ Cancel", func() {
+		log.Printf("User cancelled no app dialog")
+		if ui.noAppDialog != nil {
+			ui.noAppDialog.Hide()
+		}
+	})
+	cancelBtn.Importance = widget.LowImportance
+
+	// Layout the dialog content
+	header := container.NewBorder(nil, nil, titleLabel, nil)
+	actions := container.NewHBox(openInFilesBtn, copyPathBtn, cancelBtn)
+	content := container.NewVBox(
+		header,
+		messageLabel,
+		widget.NewSeparator(),
+		actions,
+	)
+
+	// Create and show the dialog
+	ui.noAppDialog = widget.NewModalPopUp(content, ui.window.Canvas())
+	ui.noAppDialog.Resize(fyne.NewSize(350, 200))
+	ui.noAppDialog.Show()
 }
 
 // onCopyPath handles copying file path to clipboard
@@ -1073,4 +1236,91 @@ func (ui *RootUI) handlePlaylistURL(url string) {
 			}()
 		})
 	}()
+}
+
+// readAndApplySettings reads current settings and applies them to download service
+func (ui *RootUI) readAndApplySettings() {
+	// Update localization language
+	ui.localization.SetLanguage(ui.settings.GetLanguage())
+
+	// Get configured downloads directory
+	downloadsDir := ui.settings.GetDownloadDirectory()
+
+	// Ensure directory exists
+	if err := platform.CreateDirectoryIfNotExists(downloadsDir); err != nil {
+		log.Printf("failed to ensure downloads dir: %v", err)
+	}
+
+	// Update download service settings
+	ui.downloadSvc.SetMaxParallelDownloads(ui.settings.GetMaxParallelDownloads())
+	ui.downloadSvc.SetDownloadDirectory(downloadsDir)
+
+	// Update quality preset
+	switch ui.settings.GetQualityPreset() {
+	case config.QualityBest:
+		ui.downloadSvc.SetQualityPreset("best")
+	case config.QualityMedium:
+		ui.downloadSvc.SetQualityPreset("medium")
+	case config.QualityAudio:
+		ui.downloadSvc.SetQualityPreset("audio")
+	default:
+		ui.downloadSvc.SetQualityPreset("best")
+	}
+
+	log.Printf("Settings applied: dir=%s, maxParallel=%d, quality=%s",
+		downloadsDir, ui.settings.GetMaxParallelDownloads(), ui.settings.GetQualityPreset())
+}
+
+// createMobileIconPanel creates a panel with quick access icons for mobile
+func (ui *RootUI) createMobileIconPanel() *fyne.Container {
+	// Create horizontal container with title in center and icons on sides
+	leftIcons := container.NewHBox(ui.settingsBtn, ui.languageBtn)
+	rightSpacer := widget.NewLabel("") // Empty spacer for balance
+
+	// Create main container with title in center
+	mainContainer := container.NewBorder(
+		nil, nil, // top, bottom
+		leftIcons,     // left - icons
+		rightSpacer,   // right - empty spacer
+		ui.titleLabel, // center - title
+	)
+
+	// Add some padding
+	return container.NewPadded(mainContainer)
+}
+
+// onLanguageButtonClick handles language button click on mobile
+func (ui *RootUI) onLanguageButtonClick() {
+	// Create language selection popup
+	availableLanguages := ui.localization.GetAvailableLanguages()
+
+	var languageItems []fyne.CanvasObject
+	for code, name := range availableLanguages {
+		langCode := code // Capture for closure
+
+		// Create button for each language
+		langBtn := widget.NewButton(name, func() {
+			ui.onLanguageChange(langCode)
+			if ui.languagePopup != nil {
+				ui.languagePopup.Hide()
+			}
+		})
+
+		// Mark current language
+		if ui.localization.GetCurrentLanguage() == langCode {
+			langBtn.Importance = widget.HighImportance
+		} else {
+			langBtn.Importance = widget.MediumImportance
+		}
+
+		languageItems = append(languageItems, langBtn)
+	}
+
+	// Create popup content
+	popupContent := container.NewVBox(languageItems...)
+
+	// Create and show popup
+	ui.languagePopup = widget.NewModalPopUp(popupContent, ui.window.Canvas())
+	ui.languagePopup.Resize(fyne.NewSize(200, float32(len(languageItems)*50)))
+	ui.languagePopup.Show()
 }

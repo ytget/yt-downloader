@@ -43,6 +43,7 @@ Thumbs.db
 
 # Project specific
 changelog*
+*workspace
 
 # Cross-build artifacts
 fyne-cross/

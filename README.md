@@ -1,8 +1,15 @@
 # yt-downloader
 
-[![GitHub release](https://img.shields.io/github/v/release/romanitalian/yt-downloader?sort=semver)](https://github.com/romanitalian/yt-downloader/releases)
+[![Build Status](https://github.com/ytget/yt-downloader/actions/workflows/build.yaml/badge.svg)](https://github.com/ytget/yt-downloader/actions/workflows/build.yaml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ytget/yt-downloader)](https://goreportcard.com/report/github.com/ytget/yt-downloader)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/ytget/yt-downloader)](https://github.com/ytget/yt-downloader)
+[![GitHub release](https://img.shields.io/github/v/release/ytget/yt-downloader?sort=semver)](https://github.com/ytget/yt-downloader/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows%20%7C%20Android-blue)](https://github.com/ytget/yt-downloader)
+[![GitHub issues](https://img.shields.io/github/issues/ytget/yt-downloader)](https://github.com/ytget/yt-downloader/issues)
+[![GitHub stars](https://img.shields.io/github/stars/ytget/yt-downloader?style=social)](https://github.com/ytget/yt-downloader/stargazers)
 
-Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust yt-dlp integration.
+Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust native Go integration.
 
 <div align="center">
     <img src="./yt-downloader.png" alt="yt-downloader" width="250" height="250" />
@@ -14,7 +21,7 @@ Lightweight cross‑platform desktop app to download YouTube videos and playlist
 - [Screenshots](#screenshots)
 - [Configuration](#configuration-in-app-settings)
 - [Architecture overview](#architecture-overview)
-- [yt-dlp flags](#playlist-parsing-and-yt-dlp-flags)
+- [Download configuration](#download-configuration)
 - [Development](#development-makefile-driven)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -31,7 +38,7 @@ Lightweight cross‑platform desktop app to download YouTube videos and playlist
 - [Quick start](#quick-start)
 - [Usage](#usage)
 - [Configuration (in-app Settings)](#configuration-in-app-settings)
-- [Playlist parsing and yt-dlp flags](#playlist-parsing-and-yt-dlp-flags)
+- [Download configuration](#download-configuration)
 - [Development (Makefile driven)](#development-makefile-driven)
 - [Troubleshooting](#troubleshooting)
 - [Diagnostics and issue reporting](#diagnostics-and-issue-reporting)
@@ -48,12 +55,12 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
 
 ### Purpose
 - Provide a simple, reliable, cross‑platform YouTube downloader with a friendly UI.
-- Handle large playlists quickly using yt-dlp's flat JSON mode.
+- Handle large playlists quickly using native Go parsing.
 - Offer sensible defaults with options for power users (quality presets, filename template, parallelism, language, auto-reveal on complete).
 
 ### Features
 - Best‑effort resilient downloads (continue, no-overwrite behavior).
-- Playlist parsing via external `yt-dlp` CLI with `--flat-playlist` + `--dump-json` for speed and stability.
+- Playlist parsing via native Go engine for speed and stability.
 - Live progress, speed, ETA; per-item Start/Pause/Stop, Open/Reveal, Copy path, Remove.
 - Parallel downloads with configurable limit.
 - File naming template and quality presets (best/medium/audio).
@@ -63,11 +70,32 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
 
 ### Screenshots
 
+#### Desktop (macOS, Linux, Windows)
+
 <div align="center">
-  <img src="./screenshots/screen-01-playlist-downloading.jpeg" alt="Playlist downloading UI" width="720" />
-  <br/>
-  <img src="./screenshots/screen-02-settings.jpeg" alt="Settings dialog" width="720" />
-  <br/>
+  <p><strong>Playlist downloading with live progress tracking</strong></p>
+  <img src="./screenshots/screen-01-playlist-downloading.jpeg" alt="Playlist downloading UI" width="720" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
+  
+  <hr style="width: 60%; margin: 40px auto;" />
+  
+  <p><strong>Settings dialog with quality presets and localization</strong></p>
+  <img src="./screenshots/screen-02-settings.jpeg" alt="Settings dialog" width="720" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
+</div>
+
+<hr style="width: 80%; margin: 50px auto;" />
+
+#### Mobile (Android)
+
+<div align="center">
+  <p><strong>Completed downloads list</strong></p>
+  <img src="./screenshots/screen-03-android-downloaded-list.jpg" alt="Android - Downloaded list" width="360" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
+  
+  <hr style="width: 60%; margin: 40px auto;" />
+  
+  <p><strong>Download in progress with speed and ETA</strong></p>
+  <img src="./screenshots/screen-04-android-downloading-in-progress.jpg" alt="Android - Downloading in progress" width="360" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
+  
+  <br/><br/>
   <sub>Screens may vary slightly depending on OS and theme.</sub>
 </div>
 
@@ -75,38 +103,59 @@ yt-downloader is a GUI application written in Go using the Fyne toolkit. It down
 - macOS 12+
 - Linux (X11/Wayland)
 - Windows 10/11
+- Android 7.0+ (arm, arm64)
 
 ### Architecture overview
 - UI: Fyne (`internal/ui`) with a unified playlist view and task rows.
-- Downloads: `github.com/lrstanley/go-ytdlp` wrapper (uses yt-dlp under the hood) for single videos.
-- Playlists: external `yt-dlp` process (CLI) for fast list extraction; JSON lines are parsed to `Playlist`/`PlaylistVideo`.
+- Downloads: `github.com/ytget/ytdlp` (pure Go engine) for single videos and playlists.
+- All processing handled by native Go library without external dependencies.
 - Settings: stored via Fyne preferences; sane defaults with runtime changes.
 
 ### Requirements
 - Go (matching `go.mod`, currently 1.24.x).
-- yt-dlp installed and available in PATH (required for playlist parsing; also used by the downloader library under the hood).
-  - macOS: `brew install yt-dlp`
-  - Linux (Debian/Ubuntu): `sudo apt install yt-dlp` (or install latest from the project)
-  - Windows: install from the official project and add to PATH
+- No external dependencies required for core functionality (all handled by pure Go engine).
   - Optional but recommended: `ffmpeg` installed in PATH for muxing/format conversions.
 
 ### Installation
-- Clone the repo and ensure `yt-dlp` is installed.
-- The app runs without additional system services. All dependencies are Go modules; UI uses Fyne.
-- Install binary into your Go bin:
 
-```
-make install
+#### Download pre-built binaries
+
+Go to the [Releases page](https://github.com/ytget/yt-downloader/releases) and download the latest version for your platform:
+
+- **macOS**: `yt-downloader_vX.X.X_darwin.zip` - unzip and drag `.app` to Applications
+- **Linux (amd64)**: `yt-downloader_vX.X.X_linux_amd64.tar.xz` - extract and run
+- **Windows (amd64)**: `yt-downloader_vX.X.X_windows_amd64.zip` - extract and run `.exe`
+- **Android**: `yt-downloader_vX.X.X_android_arm64.apk` - download and install APK
+  - For older devices: `yt-downloader_vX.X.X_android_arm.apk`
+
+#### Build from source
+
+If you want to build from source:
+
+1. Clone the repository:
+```bash
+git clone https://github.com/ytget/yt-downloader.git
+cd yt-downloader
 ```
 
-- Alternatively, download `yt-dlp` locally into `./bin` via:
-
-```
+2. Install dependencies:
+```bash
 make deps
 ```
 
+3. Run the app:
+```bash
+make run
+```
+
+4. Or build binary:
+```bash
+make build
+# Binary will be in bin/yt-downloader
+```
+
 ### Quick start
-1) Install `yt-dlp`.
+1) Install dependencies:
 2) Run the app:
 
 ```
@@ -128,12 +177,10 @@ make run
 - Language: System/English/Русский/Português.
 - Auto reveal on complete: open file location automatically after download.
 
-### Playlist parsing and yt-dlp flags
-For playlists, the app runs the external `yt-dlp` process with:
-- `--flat-playlist` — list items only (fast for big playlists)
-- `--dump-json` — each item is printed as a JSON line and parsed
-
-For downloads (via go-ytdlp -> yt-dlp):
+### Download configuration
+For playlists and single videos, the app uses the native Go engine:
+- Fast playlist parsing with native Go implementation
+- Progressive download with resume capability
 - Continue partial downloads, avoid overwriting final files, prefer best MP4/WebM, and stream frequent progress updates for the UI.
 
 ### Development (Makefile driven)
@@ -159,14 +206,14 @@ Aliases:
 - `r` -> run, `t` -> test, `l` -> lint, `f` -> format, `dr` -> docker-run, `ds` -> docker-stop.
 
 ### Troubleshooting
-- "yt-dlp not found": ensure `yt-dlp` is installed and in PATH.
+- Download issues: ensure network connectivity and valid URLs.
 - Playlist returns 0 items: verify the URL contains `list=`; some Mix/autoplay lists are special but still supported when `list=` is present.
 - Progress not showing 100%: for rare cases with unknown total size, completion will still flip the status to Completed.
 - macOS Gatekeeper: you may need to allow the app/network access depending on your environment.
 
 ### Diagnostics and issue reporting
 When reporting a bug, please include:
-- Your OS and version, Go version, and `yt-dlp --version`.
+- Your OS and version, Go version.
 - Example URL(s) that reproduce the issue (video or playlist with `list=`).
 - Full app logs captured from a terminal session.
 
@@ -179,7 +226,7 @@ make run 2>&1 | tee debug.log
 ```
 
 Before filing an issue, please:
-- Ensure you are on the latest `yt-dlp` (update it if needed).
+- Ensure you are using the latest version of the application.
 - Search existing issues to avoid duplicates.
 - Provide clear steps to reproduce and expected vs actual behavior.
 
@@ -190,15 +237,15 @@ Before filing an issue, please:
 - Theming and additional locales.
 
 ### FAQ
-- Why do I need `yt-dlp` installed? — The app delegates extraction/downloading to `yt-dlp` for maximum site compatibility and performance.
-- How do I update `yt-dlp`? — Use your package manager (e.g. `brew upgrade yt-dlp`) or run `make deps` to refresh the local copy in `./bin`.
+- Why no external dependencies? — The app uses a native Go engine for maximum compatibility and performance.
+- How do I update the app? — Pull the latest changes and rebuild, or download the latest release.
 - Where are files saved? — By default to the system Downloads folder; you can change it in Settings.
 
 ### Legal note
 This tool is intended for downloading content you have the rights to access. Respect platform Terms of Service and local laws.
 
 ### Open Source & License
-- Purpose: deliver a friendly, cross‑platform GUI for downloading videos/playlists using Fyne and yt-dlp, with focus on stability and UX.
+- Purpose: deliver a friendly, cross‑platform GUI for downloading videos/playlists using Fyne and native Go engine, with focus on stability and UX.
 - License: MIT (see `LICENSE`).
 - Versioning: SemVer; releases are cut from tags `v*` (e.g., `v1.2.3`).
 - Transparency: roadmap and changes via GitHub Issues/PRs and release notes.
@@ -209,7 +256,7 @@ We welcome community contributions. Please follow the guidelines below.
 
 - Requirements
   - Go: version from `go.mod`.
-  - yt-dlp: must be in `PATH`, or download locally with `make deps`.
+  - All dependencies handled via Go modules.
   - Recommended: `ffmpeg` in `PATH` for muxing/format conversions.
 
 - Quick start (development)
@@ -247,7 +294,7 @@ We welcome community contributions. Please follow the guidelines below.
     - `SHA256SUMS.txt` generated and attached to GitHub Release
 
 - How to help
-  - Report issues with logs (`make debug`), OS/Go versions, `yt-dlp --version`, and reproducible URLs.
+  - Report issues with logs (`make debug`), OS/Go versions, and reproducible URLs.
   - Propose improvements: UX, localization, tests, docs.
   - Smaller PRs are easier to review.
 
@@ -255,9 +302,9 @@ We welcome community contributions. Please follow the guidelines below.
   - Be respectful. Friendly, focused collaboration is appreciated.
 
 ### Acknowledgements
-- `yt-dlp` — the heart of extraction.
+- `github.com/ytget/ytdlp` — native Go YouTube download engine.
 - `Fyne` — cross‑platform UI.
-- `go-ytdlp` — Go wrapper around yt-dlp used for downloads.
+- Pure Go implementation for maximum compatibility.
 - Inspiration from [`youtube-dl`](https://github.com/ytdl-org/youtube-dl) project and its excellent documentation structure.
 
 ### License
