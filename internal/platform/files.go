@@ -15,6 +15,7 @@ const (
 	OSDarwin  = "darwin"
 	OSWindows = "windows"
 	OSLinux   = "linux"
+	OSAndroid = "android"
 )
 
 // File permissions
@@ -104,6 +105,8 @@ func OpenFileInManager(filePath string) error {
 		return openFileInExplorerWindows(absPath)
 	case OSLinux:
 		return openFileInManagerLinux(absPath)
+	case OSAndroid:
+		return openFileInManagerAndroid(absPath)
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
@@ -143,6 +146,67 @@ func openFileInManagerLinux(filePath string) error {
 	return fmt.Errorf("no suitable file manager found")
 }
 
+// openFileInManagerAndroid opens file in file manager on Android
+func openFileInManagerAndroid(filePath string) error {
+
+	var err error
+	var cmd *exec.Cmd
+
+	// Strategy 1: Try to open Downloads folder (most reliable)
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", "content://com.android.externalstorage.documents/root/primary/Download")
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 2: Try to open directory containing the file
+	dir := filepath.Dir(filePath)
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", "file://"+dir)
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 3: Try to open with system Settings > Storage (always available)
+	cmd = exec.Command("am", "start", "-a", "android.settings.INTERNAL_STORAGE_SETTINGS")
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 4: Try to open with generic Settings
+	cmd = exec.Command("am", "start", "-a", "android.settings.SETTINGS")
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 5: Try to open file with system file picker
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", "file://"+filePath)
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 6: Try to open with specific file manager apps
+	fileManagers := []string{
+		"com.google.android.documentsui/.DocumentsActivity", // Files by Google
+		"com.android.documentsui/.DocumentsActivity",        // System file manager
+		"com.sec.android.app.myfiles/.MainActivity",         // Samsung My Files
+		"com.mi.android.filemanager/.ui.MainActivity",       // MI File Manager
+	}
+
+	for _, fm := range fileManagers {
+		cmd = exec.Command("am", "start", "-n", fm, "-d", "file://"+dir)
+		if err = cmd.Run(); err == nil {
+			return nil
+		}
+	}
+
+	// Strategy 7: Try to share the file (fallback)
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.SEND", "-t", "video/*", "--eu", "android.intent.extra.STREAM", "file://"+filePath)
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("failed to open file in manager: no suitable file manager found")
+}
+
 // CreateDirectoryIfNotExists creates directory if it doesn't exist
 func CreateDirectoryIfNotExists(dirPath string) error {
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
@@ -172,6 +236,8 @@ func OpenFileWithDefaultApp(filePath string) error {
 		return openFileWithDefaultAppWindows(absPath)
 	case OSLinux:
 		return openFileWithDefaultAppLinux(absPath)
+	case OSAndroid:
+		return openFileWithDefaultAppAndroid(absPath)
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
@@ -196,8 +262,84 @@ func openFileWithDefaultAppLinux(filePath string) error {
 	return cmd.Run()
 }
 
+// openFileWithDefaultAppAndroid opens file with default app on Android
+func openFileWithDefaultAppAndroid(filePath string) error {
+
+	// Professional approach: Use multiple strategies with proper error handling
+	var err error
+	var cmd *exec.Cmd
+
+	// Strategy 1: Try with system Gallery app (most reliable for media files)
+	cmd = exec.Command("am", "start", "-n", "com.android.gallery3d/.app.GalleryActivity", "-d", "file://"+filePath)
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 2: Try with specific MIME type for MP4 files
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", "file://"+filePath, "-t", "video/mp4")
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 3: Try with generic video MIME type
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", "file://"+filePath, "-t", "video/*")
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 4: Try with audio MIME type
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", "file://"+filePath, "-t", "audio/*")
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 5: Try without MIME type (let system decide)
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", "file://"+filePath)
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 6: Try with content:// URI (modern Android)
+	contentURI := "content://media/external/file" + filePath
+	cmd = exec.Command("am", "start", "-a", "android.intent.action.VIEW", "-d", contentURI, "-t", "video/*")
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 7: Try with VLC if available
+	cmd = exec.Command("am", "start", "-n", "org.videolan.vlc/.gui.video.VideoPlayerActivity", "-d", "file://"+filePath)
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// Strategy 8: Try with MX Player if available
+	cmd = exec.Command("am", "start", "-n", "com.mxtech.videoplayer.ad/.ActivityScreen", "-d", "file://"+filePath)
+	if err = cmd.Run(); err == nil {
+		return nil
+	}
+
+	// All strategies failed
+	return fmt.Errorf("failed to open file with any method: no suitable app found")
+}
+
 // GetHomeDownloadsDir returns the standard Downloads directory for the user
 func GetHomeDownloadsDir() (string, error) {
+	// For Android, use the external storage Downloads directory
+	// Check multiple ways to detect Android environment
+	isAndroid := runtime.GOOS == "android" ||
+		os.Getenv("ANDROID_DATA") != "" ||
+		os.Getenv("ANDROID_ROOT") != "" ||
+		os.Getenv("ANDROID_STORAGE") != "" ||
+		filepath.Base(os.Args[0]) == "libdist.so" // Fyne Android apps run as libdist.so
+
+	if isAndroid {
+		// Use external storage Downloads directory so files appear in Gallery
+		// This works with Scoped Storage on Android 11+ and is accessible via file manager
+		downloadsDir := "/sdcard/Download"
+		return downloadsDir, nil
+	}
+
+	// For other platforms, use the standard Downloads directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user home directory: %w", err)
@@ -425,4 +567,28 @@ func getDescriptiveScore(filename string) int {
 	}
 
 	return score
+}
+
+// NotifyMediaScanner notifies Android media scanner about new media files
+// This makes downloaded videos appear in the Gallery app
+func NotifyMediaScanner(filePath string) error {
+	// Only for Android
+	if runtime.GOOS != "android" && os.Getenv("ANDROID_DATA") == "" && os.Getenv("ANDROID_ROOT") == "" {
+		return nil
+	}
+
+	// Use am broadcast to notify media scanner about the new file
+	// This is the standard way to notify Android about new media files
+	cmd := exec.Command("am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", "file://"+filePath)
+
+	// Run the command in background, don't wait for it to complete
+	// This prevents blocking the download process
+	go func() {
+		if err := cmd.Run(); err != nil {
+			// Log error but don't fail the download
+			fmt.Printf("Failed to notify media scanner about %s: %v\n", filePath, err)
+		}
+	}()
+
+	return nil
 }

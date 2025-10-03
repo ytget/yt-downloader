@@ -39,6 +39,7 @@ const (
 	KeyTaskAdded         = "task_added"
 	KeyPause             = "pause"
 	KeyContinue          = "continue"
+	KeyPlay              = "play"
 
 	// Notification panel
 	KeyParsingStarted = "parsing_started"
@@ -139,6 +140,7 @@ func (l *Localization) initializeTexts() {
 		KeyTaskAdded:         "Task added to queue",
 		KeyPause:             "Pause",
 		KeyContinue:          "Continue",
+		KeyPlay:              "Play",
 		KeyParsingStarted:    "Starting playlist parsing in background...",
 		KeyParsingFailed:     "Failed to parse playlist",
 		KeyPlaylistParsed:    "Playlist parsed",
@@ -180,6 +182,7 @@ func (l *Localization) initializeTexts() {
 		KeyTaskAdded:         "Задача добавлена в очередь",
 		KeyPause:             "Пауза",
 		KeyContinue:          "Продолжить",
+		KeyPlay:              "Воспроизвести",
 		KeyParsingStarted:    "Запуск парсинга плейлиста в фоне...",
 		KeyParsingFailed:     "Не удалось распарсить плейлист",
 		KeyPlaylistParsed:    "Плейлист распарсен",
@@ -221,6 +224,7 @@ func (l *Localization) initializeTexts() {
 		KeyTaskAdded:         "Tarefa adicionada à fila",
 		KeyPause:             "Pausar",
 		KeyContinue:          "Continuar",
+		KeyPlay:              "Reproduzir",
 		KeyParsingStarted:    "Iniciando análise da playlist em segundo plano...",
 		KeyParsingFailed:     "Falha ao analisar a playlist",
 		KeyPlaylistParsed:    "Playlist analisada",

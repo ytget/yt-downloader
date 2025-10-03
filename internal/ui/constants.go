@@ -14,6 +14,14 @@ const (
 	IconCopy     = "📋"
 	IconClose    = "×"
 	IconError    = "❌"
+	IconLanguage = "🌐"
+	IconMenu     = "☰"
+
+	// Mobile-specific icons
+	IconShare  = "📱"
+	IconDelete = "🗑️"
+	IconMusic  = "🎵"
+	IconResume = "▶️"
 )
 
 // Text fragments
@@ -32,6 +40,21 @@ const (
 	RowMinWidth  float32 = 400
 	RowMinHeight float32 = 80
 	RowDefaultH  float32 = 72
+
+	// Mobile-specific sizing
+	MobileRowMinWidth  float32 = 300
+	MobileRowMinHeight float32 = 100
+	MobileRowDefaultH  float32 = 88
+
+	// Touch target minimum sizes (iOS/Android guidelines)
+	MinTouchTargetSize float32 = 44
+	MobileButtonHeight float32 = 48
+	MobileEntryHeight  float32 = 48
+
+	// Mobile button sizing
+	MobileButtonWidth     float32 = 60
+	MobileButtonSpacing   float32 = 8
+	MobileRowButtonHeight float32 = 52
 )
 
 // Toast notification sizing and behavior
