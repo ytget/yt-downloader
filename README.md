@@ -128,6 +128,23 @@ Go to the [Releases page](https://github.com/ytget/yt-downloader/releases) and d
 - **Android**: `yt-downloader_vX.X.X_android_arm64.apk` - download and install APK
   - For older devices: `yt-downloader_vX.X.X_android_arm.apk`
 
+#### Install via Homebrew (macOS)
+
+For macOS users, you can install yt-downloader using Homebrew:
+
+```bash
+# Add the tap and install
+brew tap ytget/yt-downloader
+brew install ytget/yt-downloader/yt-downloader
+```
+
+Or in one command:
+```bash
+brew install ytget/yt-downloader/yt-downloader
+```
+
+**Note**: This installs the latest version from the main branch. For stable releases, use the pre-built binaries from the Releases page.
+
 #### Build from source
 
 If you want to build from source:
@@ -330,36 +347,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Build artifacts and release structure
-
-This project supports two build paths:
-- Local builds (native toolchain)
-- Cross-platform builds via Docker using fyne-cross
-
-### Output directories
-- `bin/`: native binaries built by `make build` (current host only).
-- `fyne-cross/dist/<target>/`: release-ready packages produced by fyne-cross (e.g. `linux-amd64/dist.tar.xz`, `windows-amd64/dist.zip`, `android-*/dist.apk`).
-- `fyne-cross/bin/<target>/`: raw binaries produced by fyne-cross (if available).
-- `dist/`: aggregated artifacts for publishing; populated by `make collect-artifacts`.
-- `dist/darwin-local/`: zipped local macOS `.app` bundles.
-
-### Common tasks
-- Cross-build (Docker required):
-  - Linux amd64: `make build-linux-amd64`
-  - Windows amd64: `make build-windows-amd64`
-  - Android (all ABIs): `make build-android`
-- Local macOS packaging (on macOS):
-  - macOS `.app`: `make package-darwin`
-- Aggregate all outputs into `dist/`:
-  - `make collect-artifacts`
-
-Version embedding: all builds inject version with `-ldflags -X main.version=<value>` (auto-populated from `git describe` in Makefile).
-
-### CI (GitHub Actions) recommendations
-- Build using the same targets as above (Linux/Windows/Android on `ubuntu-latest`; macOS/iOS on `macos-latest` if needed).
-- Upload artifacts from `fyne-cross/dist/**` (and optionally `dist/**` if you aggregate locally in workflow).
-- Attach the same artifacts to GitHub Releases triggered by tags `v*`.
-
-Example artifact globs:
-- `fyne-cross/dist/**`
-- `dist/**` (if `make collect-artifacts` is used in CI)

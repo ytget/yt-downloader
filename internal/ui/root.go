@@ -181,15 +181,22 @@ func (ui *RootUI) setupUI() {
 	ui.titleLabel.Alignment = fyne.TextAlignCenter
 
 	// Create logo
-	logo, err := LoadLogoResource()
 	var logoImage *canvas.Image
-	if err == nil {
-		logoImage = canvas.NewImageFromResource(logo)
+	if LogoResource != nil {
+		logoImage = canvas.NewImageFromResource(LogoResource)
 		logoImage.SetMinSize(fyne.NewSize(32, 32))
 		logoImage.FillMode = canvas.ImageFillContain
 	} else {
-		// Fallback to text if logo loading fails
-		logoImage = nil
+		// Fallback: try to load from file
+		logo, err := LoadLogoResource()
+		if err == nil {
+			logoImage = canvas.NewImageFromResource(logo)
+			logoImage.SetMinSize(fyne.NewSize(32, 32))
+			logoImage.FillMode = canvas.ImageFillContain
+		} else {
+			// Fallback to text if logo loading fails
+			logoImage = nil
+		}
 	}
 
 	// Create top panel (URL row) with logo
