@@ -64,22 +64,33 @@ func NewSettings(app fyne.App) *Settings {
 
 // GetDownloadDirectory returns the configured download directory
 func (s *Settings) GetDownloadDirectory() string {
-	dir := s.app.Preferences().String(KeyDownloadDir)
-	if dir == "" {
-		// Use system default Downloads directory
-		defaultDir, err := platform.GetHomeDownloadsDir()
-		if err != nil {
-			defaultDir = FallbackDownloadDir
-		}
-		s.SetDownloadDirectory(defaultDir)
-		return defaultDir
+	// Always get the current system default directory
+	// This ensures Android gets /sdcard/Download even if old path was saved
+	defaultDir, err := platform.GetHomeDownloadsDir()
+	if err != nil {
+		defaultDir = FallbackDownloadDir
 	}
-	return dir
+
+	// Check if we have a saved directory that's different from current default
+	savedDir := s.app.Preferences().String(KeyDownloadDir)
+	if savedDir != "" && savedDir != defaultDir {
+		// User has manually set a custom directory, use it
+		return savedDir
+	}
+
+	// Use system default and save it
+	s.SetDownloadDirectory(defaultDir)
+	return defaultDir
 }
 
 // SetDownloadDirectory sets the download directory
 func (s *Settings) SetDownloadDirectory(dir string) {
 	s.app.Preferences().SetString(KeyDownloadDir, dir)
+}
+
+// ResetDownloadDirectory resets download directory to system default
+func (s *Settings) ResetDownloadDirectory() {
+	s.app.Preferences().RemoveValue(KeyDownloadDir)
 }
 
 // GetMaxParallelDownloads returns the maximum number of parallel downloads

@@ -54,6 +54,7 @@ type TaskRow struct {
 
 	task         *model.DownloadTask
 	localization *Localization
+	mobileUI     *MobileUI
 
 	// UI components
 	titleLabel    *widget.Label
@@ -66,6 +67,9 @@ type TaskRow struct {
 	openBtn       *widget.Button // reveal in file manager
 	playBtn       *widget.Button // open file with default app (player)
 	copyBtn       *widget.Button
+
+	// Mobile-specific button
+	mobilePlayBtn *widget.Button // single large play button for mobile
 
 	// Callbacks
 	onStartPause func(taskID string)
@@ -90,6 +94,7 @@ func NewTaskRow(task *model.DownloadTask, localization *Localization) *TaskRow {
 	tr := &TaskRow{
 		task:         task,
 		localization: localization,
+		mobileUI:     NewMobileUI(fyne.CurrentApp()),
 	}
 	tr.ExtendBaseWidget(tr)
 	tr.createUI()
@@ -182,8 +187,8 @@ func (tr *TaskRow) createUI() {
 	tr.speedEtaLabel.Alignment = fyne.TextAlignLeading
 	tr.speedEtaLabel.TextStyle = fyne.TextStyle{Monospace: true}
 
-	// Create action buttons
-	tr.startPauseBtn = widget.NewButton(tr.localization.GetText(KeyPause), func() {
+	// Create action buttons (simplified for debugging)
+	tr.startPauseBtn = tr.mobileUI.CreateMobileButton(tr.localization.GetText(KeyPause), func() {
 		// Get current task state dynamically
 		currentTask := tr.task
 		log.Printf("Start/Pause button clicked for task %s", currentTask.ID)
@@ -196,7 +201,7 @@ func (tr *TaskRow) createUI() {
 	tr.startPauseBtn.Importance = widget.MediumImportance
 
 	// open -> reveal in file manager (Finder/Explorer) and highlight file
-	tr.openBtn = widget.NewButton("open", func() {
+	tr.openBtn = tr.mobileUI.CreateMobileButton("open", func() {
 		// Get current task state dynamically - not from closure!
 		currentTask := tr.task
 		log.Printf("Open button clicked for task %s, OutputPath: %s", currentTask.ID, currentTask.OutputPath)
@@ -232,7 +237,7 @@ func (tr *TaskRow) createUI() {
 	tr.openBtn.Importance = widget.MediumImportance
 
 	// play -> open with default app (player)
-	tr.playBtn = widget.NewButton("play", func() {
+	tr.playBtn = tr.mobileUI.CreateMobileButton("play", func() {
 		currentTask := tr.task
 		if currentTask.OutputPath != "" && !strings.HasPrefix(currentTask.OutputPath, "http") &&
 			(strings.Contains(currentTask.OutputPath, "/") || strings.Contains(currentTask.OutputPath, "\\")) {
@@ -245,7 +250,7 @@ func (tr *TaskRow) createUI() {
 	})
 	tr.playBtn.Importance = widget.MediumImportance
 
-	tr.copyBtn = widget.NewButton("path", func() {
+	tr.copyBtn = tr.mobileUI.CreateMobileButton("path", func() {
 		currentTask := tr.task
 		if tr.onCopyPath != nil {
 			if currentTask.OutputPath != "" && !strings.HasPrefix(currentTask.OutputPath, "http") &&
@@ -259,6 +264,41 @@ func (tr *TaskRow) createUI() {
 		}
 	})
 	tr.copyBtn.Importance = widget.MediumImportance
+
+	// Create mobile-specific play button
+	tr.mobilePlayBtn = tr.mobileUI.CreateMobileButton(IconMusic+" "+tr.localization.GetText(KeyPlay), func() {
+		currentTask := tr.task
+		log.Printf("Mobile Play button clicked for task %s, OutputPath: %s", currentTask.ID, currentTask.OutputPath)
+
+		if tr.onOpen == nil {
+			log.Printf("onOpen callback is nil for task %s", currentTask.ID)
+			widget.ShowPopUp(widget.NewLabel("Callback not set"), fyne.CurrentApp().Driver().CanvasForObject(tr.mobilePlayBtn))
+			return
+		}
+
+		if currentTask.OutputPath == "" {
+			log.Printf("No output path available for task %s (status: %s)", currentTask.ID, currentTask.Status)
+			widget.ShowPopUp(widget.NewLabel("File not ready yet. Wait for download to complete."), fyne.CurrentApp().Driver().CanvasForObject(tr.mobilePlayBtn))
+			return
+		}
+
+		// Check if this is actually a file path, not a URL
+		if strings.HasPrefix(currentTask.OutputPath, "http") {
+			log.Printf("Cannot open URL as file: %s", currentTask.OutputPath)
+			widget.ShowPopUp(widget.NewLabel("File not ready yet. Wait for download to complete."), fyne.CurrentApp().Driver().CanvasForObject(tr.mobilePlayBtn))
+			return
+		}
+
+		// Additional validation: check if the path looks like a real file path
+		if !strings.Contains(currentTask.OutputPath, "/") && !strings.Contains(currentTask.OutputPath, "\\") {
+			log.Printf("OutputPath does not contain path separators: %s", currentTask.OutputPath)
+			widget.ShowPopUp(widget.NewLabel("File not ready yet. Wait for download to complete."), fyne.CurrentApp().Driver().CanvasForObject(tr.mobilePlayBtn))
+			return
+		}
+
+		tr.onOpen(currentTask.OutputPath)
+	})
+	tr.mobilePlayBtn.Importance = widget.HighImportance
 
 }
 
@@ -287,8 +327,8 @@ func (tr *TaskRow) updateFromTask() {
 	log.Printf("TaskRow updateFromTask: id=%s status=%s percent=%d progress=%.2f output=%s",
 		tr.task.ID, tr.task.Status, tr.task.Percent, tr.task.Progress, tr.task.OutputPath)
 
-	// Update labels
-	titleText := tr.task.GetDisplayTitle()
+	// Update labels - use mobile-specific display for mobile devices
+	titleText := tr.task.GetDisplayTitleForMobile(tr.mobileUI.IsMobileDevice())
 
 	// Keep title compact: no URL/ID/filename/size/extension/duration in title.
 
@@ -464,7 +504,21 @@ func (tr *TaskRow) updateButtons() {
 		tr.copyBtn.Disable()
 	}
 
-	// No remove button anymore
+	// Mobile-specific button visibility
+	if tr.mobileUI.IsMobileDevice() {
+		// On mobile, hide the play button completely - show only file path
+		tr.mobilePlayBtn.Hide()
+
+		// Hide all other buttons on mobile
+		tr.startPauseBtn.Hide()
+		tr.openBtn.Hide()
+		tr.playBtn.Hide()
+		tr.copyBtn.Hide()
+	} else {
+		// On desktop, hide mobile button and show regular buttons
+		tr.mobilePlayBtn.Hide()
+		// Regular button logic is already handled above
+	}
 }
 
 // CreateRenderer creates the widget renderer
@@ -557,6 +611,12 @@ func (r *taskRowRenderer) Destroy() {}
 func (r *taskRowRenderer) createLayout() {
 	tr := r.taskRow
 
+	// Check if we're on mobile device for simplified layout
+	if tr.mobileUI.IsMobileDevice() {
+		r.createMobileLayout()
+		return
+	}
+
 	// Left side: file title (more prominent)
 	leftSide := tr.titleLabel
 
@@ -607,14 +667,64 @@ func (r *taskRowRenderer) createLayout() {
 	// Border with center expandable title and right cluster pinned.
 	mainContent := container.NewBorder(nil, nil, nil, rightCluster, leftSide)
 
+	// Simplified layout for debugging
 	r.layout = container.NewVBox(
 		mainContent,
 		separator,
 	)
-
 	// Ensure layout has reasonable sizing; give room for two text lines
 	r.layout.Resize(fyne.NewSize(RowMinWidth, RowDefaultH))
 
 	// Force refresh of the layout
 	r.layout.Refresh()
+}
+
+// createMobileLayout creates a simplified layout for mobile devices
+func (r *taskRowRenderer) createMobileLayout() {
+	tr := r.taskRow
+
+	// Simple vertical layout for mobile
+	// Title at top
+	titleContainer := container.NewVBox(tr.titleLabel)
+
+	// Status and info in one row
+	infoContainer := container.NewHBox(
+		tr.statusLabel,
+		tr.speedEtaLabel,
+		tr.progressLabel,
+	)
+
+	// Action buttons - use mobile button if on mobile, otherwise regular buttons
+	var buttonsContainer *fyne.Container
+	if tr.mobileUI.IsMobileDevice() {
+		// No buttons for mobile - just show file path
+		buttonsContainer = container.NewHBox() // Empty container
+	} else {
+		// Regular buttons for desktop
+		buttonsContainer = container.NewHBox(
+			tr.startPauseBtn,
+			tr.openBtn,
+			tr.playBtn,
+			tr.copyBtn,
+		)
+	}
+
+	// Combine everything vertically
+	mainContent := container.NewVBox(
+		titleContainer,
+		infoContainer,
+		buttonsContainer,
+	)
+
+	// Create main layout
+	r.layout = container.NewBorder(
+		nil,         // top
+		nil,         // bottom
+		nil,         // left
+		nil,         // right
+		mainContent, // center
+	)
+
+	// Set mobile-appropriate size
+	r.layout.Resize(fyne.NewSize(MobileRowMinWidth, MobileRowMinHeight+30))
 }

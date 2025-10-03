@@ -87,3 +87,21 @@ func (dt *DownloadTask) GetDisplayTitle() string {
 	}
 	return dt.URL
 }
+
+// GetDisplayTitleForMobile returns absolute file path for mobile devices, or title for desktop
+func (dt *DownloadTask) GetDisplayTitleForMobile(isMobile bool) string {
+	if isMobile {
+		// For mobile: show absolute file path if available
+		if dt.OutputPath != "" {
+			return dt.OutputPath
+		}
+		// Fallback to title or URL
+		if dt.Title != "" && !strings.HasPrefix(dt.Title, "http") {
+			return dt.Title
+		}
+		return dt.URL
+	}
+
+	// For desktop: use regular display title
+	return dt.GetDisplayTitle()
+}

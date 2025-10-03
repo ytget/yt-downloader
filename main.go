@@ -7,7 +7,6 @@ import (
 	"fyne.io/fyne/v2/app"
 
 	"github.com/ytget/yt-downloader/internal/compress"
-	"github.com/ytget/yt-downloader/internal/config"
 	"github.com/ytget/yt-downloader/internal/download"
 	"github.com/ytget/yt-downloader/internal/platform"
 	"github.com/ytget/yt-downloader/internal/ui"
@@ -39,14 +38,20 @@ func main() {
 	myWindow := myApp.NewWindow(windowTitle)
 	myWindow.Resize(fyne.NewSize(WindowWidth, WindowHeight))
 
-	// Initialize services
-	settings := config.NewSettings(myApp)
-	downloadsDir := settings.GetDownloadDirectory()
-	if err := platform.CreateDirectoryIfNotExists(downloadsDir); err != nil {
+	// Initialize services with default values
+	// Settings will be read when Download button is clicked
+	defaultDownloadsDir, err := platform.GetHomeDownloadsDir()
+	if err != nil {
+		fmt.Printf("failed to get downloads dir: %v\n", err)
+		defaultDownloadsDir = "/tmp/downloads"
+	}
+	if err := platform.CreateDirectoryIfNotExists(defaultDownloadsDir); err != nil {
 		fmt.Printf("failed to ensure downloads dir: %v\n", err)
 	}
 
-	downloadSvc := download.NewService(downloadsDir, settings.GetMaxParallelDownloads())
+	downloadSvc := download.NewService(defaultDownloadsDir, 2) // Default values
+	downloadSvc.SetQualityPreset("best")                       // Default quality
+
 	compressSvc := compress.NewService()
 
 	// Create and setup UI

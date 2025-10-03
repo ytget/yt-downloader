@@ -22,4 +22,13 @@ type Downloader interface {
 	DownloadPlaylist(playlist *model.Playlist) error
 	CancelPlaylist(playlistID string) error
 	SetMaxPlaylistParallel(max int)
+
+	// SetQualityPreset configures quality selection for downloads (best/medium/audio)
+	SetQualityPreset(preset string)
+
+	// SetMaxParallelDownloads sets the maximum number of parallel downloads
+	SetMaxParallelDownloads(max int)
+
+	// SetDownloadDirectory sets the download directory
+	SetDownloadDirectory(dir string)
 }
