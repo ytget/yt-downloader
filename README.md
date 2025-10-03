@@ -128,6 +128,23 @@ Go to the [Releases page](https://github.com/ytget/yt-downloader/releases) and d
 - **Android**: `yt-downloader_vX.X.X_android_arm64.apk` - download and install APK
   - For older devices: `yt-downloader_vX.X.X_android_arm.apk`
 
+#### Install via Homebrew (macOS)
+
+For macOS users, you can install yt-downloader using Homebrew:
+
+```bash
+# Add the tap and install
+brew tap ytget/yt-downloader
+brew install ytget/yt-downloader/yt-downloader
+```
+
+Or in one command:
+```bash
+brew install ytget/yt-downloader/yt-downloader
+```
+
+**Note**: This installs the latest version from the main branch. For stable releases, use the pre-built binaries from the Releases page.
+
 #### Build from source
 
 If you want to build from source:

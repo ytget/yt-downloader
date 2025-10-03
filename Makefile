@@ -6,7 +6,7 @@ SHELL:=bash
 APP_ID ?= com.github.ytget.ytdownloader
 BINARY_NAME ?= yt-downloader
 APP_DISPLAY_NAME ?= YTDownloader
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' | sed 's/-.*//' || echo "0.1.0")
 ICON ?= Icon.png
 OUTPUT_DIR ?= dist
 
@@ -114,8 +114,8 @@ package-darwin-native: ## Package macOS app bundle (native build, no Docker)
 		--icon "$(ICON)" \
 		--release \
 		--os darwin \
-		--app-version "$(VERSION)" \
-		--app-build 1
+		--appVersion "$(VERSION)" \
+		--appBuild 1
 	@# Move to dist directory and create zip
 	@if [ -d "$(BINARY_NAME).app" ]; then \
 		zip -r "dist/$(BINARY_NAME).app.zip" "$(BINARY_NAME).app"; \
