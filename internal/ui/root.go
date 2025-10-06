@@ -668,7 +668,7 @@ func (ui *RootUI) onStartPauseTask(taskID string) {
 
 	task, ok := ui.downloadSvc.GetTask(taskID)
 	if !ok {
-		// Fallback to lookup by YouTube video ID for playlist rows
+		// Fallback to lookup by video ID for playlist rows
 		if t2, ok := ui.downloadSvc.GetTaskByVideoID(taskID); ok {
 			log.Printf("Mapped videoID %s to internal task %s", taskID, t2.ID)
 			task = t2
@@ -1009,7 +1009,7 @@ func (ui *RootUI) onTaskUpdate(task *model.DownloadTask) {
 	// Propagate runtime telemetry to playlist rows so speed/ETA are visible
 	ui.playlistGroup.UpdateVideoSpeed(task.ID, task.Speed, task.ETASec)
 	// Additionally try to match playlist items by URL, since playlist videos use
-	// YouTube video IDs while download tasks have generated IDs.
+	// Video IDs while download tasks have generated IDs.
 	if task.URL != "" {
 		ui.playlistGroup.UpdateVideoProgressByURL(task.URL, task.Progress)
 		ui.playlistGroup.UpdateVideoStatusByURL(task.URL, task.Status)

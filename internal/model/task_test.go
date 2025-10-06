@@ -34,9 +34,9 @@ func TestDownloadTask_GetDisplayTitle(t *testing.T) {
 		url      string
 		expected string
 	}{
-		{"Video Title", "https://youtube.com/watch?v=123", "Video Title"},
-		{"", "https://youtube.com/watch?v=123", "https://youtube.com/watch?v=123"},
-		{"Another Title", "https://youtube.com/watch?v=456", "Another Title"},
+		{"Video Title", "https://example.com/watch?v=123", "Video Title"},
+		{"", "https://example.com/watch?v=123", "https://example.com/watch?v=123"},
+		{"Another Title", "https://example.com/watch?v=456", "Another Title"},
 	}
 
 	for _, test := range tests {
@@ -56,7 +56,7 @@ func TestDownloadTask_Creation(t *testing.T) {
 	now := time.Now()
 	task := &DownloadTask{
 		ID:        "test-123",
-		URL:       "https://youtube.com/watch?v=test",
+		URL:       "https://example.com/watch?v=test",
 		Status:    TaskStatusPending,
 		Progress:  0.0,
 		Percent:   0,

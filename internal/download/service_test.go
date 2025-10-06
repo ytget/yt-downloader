@@ -29,13 +29,13 @@ func TestAddTask(t *testing.T) {
 	service := NewService("/tmp", 1)
 
 	// Add first task
-	task1, err := service.AddTask("https://youtube.com/watch?v=test1")
+	task1, err := service.AddTask("https://example.com/watch?v=test1")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	if task1.URL != "https://youtube.com/watch?v=test1" {
-		t.Errorf("Expected URL to be 'https://youtube.com/watch?v=test1', got '%s'", task1.URL)
+	if task1.URL != "https://example.com/watch?v=test1" {
+		t.Errorf("Expected URL to be 'https://example.com/watch?v=test1', got '%s'", task1.URL)
 	}
 
 	if task1.Status != model.TaskStatusPending && task1.Status != model.TaskStatusStarting {
@@ -43,19 +43,19 @@ func TestAddTask(t *testing.T) {
 	}
 
 	// Try to add duplicate task (should fail)
-	_, err = service.AddTask("https://youtube.com/watch?v=test1")
+	_, err = service.AddTask("https://example.com/watch?v=test1")
 	if err == nil {
 		t.Error("Expected error for duplicate URL, got nil")
 	}
 
 	// Add different task (should succeed)
-	task2, err := service.AddTask("https://youtube.com/watch?v=test2")
+	task2, err := service.AddTask("https://example.com/watch?v=test2")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	if task2.URL != "https://youtube.com/watch?v=test2" {
-		t.Errorf("Expected URL to be 'https://youtube.com/watch?v=test2', got '%s'", task2.URL)
+	if task2.URL != "https://example.com/watch?v=test2" {
+		t.Errorf("Expected URL to be 'https://example.com/watch?v=test2', got '%s'", task2.URL)
 	}
 }
 
@@ -63,7 +63,7 @@ func TestGetTask(t *testing.T) {
 	service := NewService("/tmp", 1)
 
 	// Add a task
-	task, err := service.AddTask("https://youtube.com/watch?v=test")
+	task, err := service.AddTask("https://example.com/watch?v=test")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -95,12 +95,12 @@ func TestGetAllTasks(t *testing.T) {
 	}
 
 	// Add some tasks with different URLs
-	task1, err1 := service.AddTask("https://youtube.com/watch?v=test1")
+	task1, err1 := service.AddTask("https://example.com/watch?v=test1")
 	if err1 != nil {
 		t.Fatalf("Failed to add first task: %v", err1)
 	}
 
-	task2, err2 := service.AddTask("https://youtube.com/watch?v=test2")
+	task2, err2 := service.AddTask("https://example.com/watch?v=test2")
 	if err2 != nil {
 		t.Fatalf("Failed to add second task: %v", err2)
 	}
@@ -158,7 +158,7 @@ func TestUpdateCallback(t *testing.T) {
 	// Create a test task
 	task := &model.DownloadTask{
 		ID:     "test-id",
-		URL:    "https://youtube.com/watch?v=test",
+		URL:    "https://example.com/watch?v=test",
 		Status: model.TaskStatusDownloading,
 	}
 
@@ -245,7 +245,7 @@ func TestSmoothingIntegration(t *testing.T) {
 	service := NewService("/tmp", 1).(*Service)
 
 	// Add a task
-	task, err := service.AddTask("https://youtube.com/watch?v=test")
+	task, err := service.AddTask("https://example.com/watch?v=test")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
