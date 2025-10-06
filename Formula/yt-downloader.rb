@@ -4,7 +4,7 @@ cask "yt-downloader" do
 
   url "https://github.com/ytget/yt-downloader/releases/download/v#{version}/yt-downloader.app.zip"
   name "YT Downloader"
-  desc "Lightweight cross-platform desktop app to download YouTube videos and playlists"
+  desc "Lightweight cross-platform desktop app to download videos and playlists"
   homepage "https://github.com/ytget/yt-downloader"
 
   livecheck do

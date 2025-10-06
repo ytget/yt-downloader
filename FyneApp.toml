@@ -8,7 +8,7 @@ Website = "https://github.com/ytget/yt-downloader"
   Build = 254
 
 [LinuxAndBSD]
-  GenericName = "YouTube Video Downloader"
+  GenericName = "Video Downloader"
   Categories = ["Network", "Video", "Audio"]
-  Comment = "Download videos and playlists from YouTube and other platforms"
-  Keywords = ["youtube", "download", "video", "playlist", "audio", "converter"]
+  Comment = "Download videos and playlists from various platforms"
+  Keywords = ["download", "video", "playlist", "audio", "converter"]

@@ -75,22 +75,22 @@ func TestPlaylistIsValidPlaylistURL(t *testing.T) {
 	}{
 		{
 			name:     "valid playlist URL with watch parameter",
-			url:      "https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID",
+			url:      "https://example.com/watch?v=VIDEO_ID&list=PLAYLIST_ID",
 			expected: true,
 		},
 		{
 			name:     "valid playlist URL with playlist parameter",
-			url:      "https://www.youtube.com/playlist?list=PLAYLIST_ID",
+			url:      "https://example.com/playlist?list=PLAYLIST_ID",
 			expected: true,
 		},
 		{
 			name:     "valid playlist URL with additional parameters",
-			url:      "https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=1",
+			url:      "https://example.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=1",
 			expected: true,
 		},
 		{
 			name:     "invalid URL without playlist parameter",
-			url:      "https://www.youtube.com/watch?v=VIDEO_ID",
+			url:      "https://example.com/watch?v=VIDEO_ID",
 			expected: false,
 		},
 		{
@@ -127,45 +127,45 @@ func TestPlaylistExtractPlaylistID(t *testing.T) {
 	}{
 		{
 			name:        "extract playlist ID from watch URL",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID",
+			url:         "https://example.com/watch?v=VIDEO_ID&list=PLAYLIST_ID",
 			expectedID:  "PLAYLIST_ID",
 			expectError: false,
 		},
 		{
 			name:        "extract playlist ID from playlist URL",
-			url:         "https://www.youtube.com/playlist?list=PLAYLIST_ID",
+			url:         "https://example.com/playlist?list=PLAYLIST_ID",
 			expectedID:  "PLAYLIST_ID",
 			expectError: false,
 		},
 		{
 			name:        "extract playlist ID with additional parameters",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&start_radio=1",
+			url:         "https://example.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&start_radio=1",
 			expectedID:  "PLAYLIST_ID",
 			expectError: false,
 		},
 		{
 			name:        "extract playlist ID with multiple parameters",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=1&t=30",
+			url:         "https://example.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=1&t=30",
 			expectedID:  "PLAYLIST_ID",
 			expectError: false,
 		},
 		{
 			name:        "URL without playlist parameter",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID",
+			url:         "https://example.com/watch?v=VIDEO_ID",
 			expectedID:  "",
 			expectError: true,
 			errorMsg:    "URL does not contain playlist parameter",
 		},
 		{
 			name:        "URL with empty playlist parameter",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID&list=",
+			url:         "https://example.com/watch?v=VIDEO_ID&list=",
 			expectedID:  "",
 			expectError: true,
 			errorMsg:    "empty playlist ID",
 		},
 		{
 			name:        "URL with malformed playlist parameter",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID&list",
+			url:         "https://example.com/watch?v=VIDEO_ID&list",
 			expectedID:  "",
 			expectError: true,
 			errorMsg:    "URL does not contain playlist parameter",
@@ -276,13 +276,13 @@ func TestPlaylistParsePlaylist_Integration(t *testing.T) {
 	}{
 		{
 			name:        "invalid URL without playlist parameter",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID",
+			url:         "https://example.com/watch?v=VIDEO_ID",
 			expectError: true,
 			errorMsg:    "invalid playlist URL format",
 		},
 		{
 			name:        "URL with empty playlist ID",
-			url:         "https://www.youtube.com/watch?v=VIDEO_ID&list=",
+			url:         "https://example.com/watch?v=VIDEO_ID&list=",
 			expectError: true,
 			errorMsg:    "empty playlist ID",
 		},
@@ -326,7 +326,7 @@ func TestPlaylistParsePlaylist_ErrorHandling(t *testing.T) {
 
 		{
 			name:           "URL with empty playlist ID should return error status",
-			url:            "https://www.youtube.com/watch?v=VIDEO_ID&list=",
+			url:            "https://example.com/watch?v=VIDEO_ID&list=",
 			expectedStatus: model.PlaylistStatusError,
 			expectError:    true,
 		},

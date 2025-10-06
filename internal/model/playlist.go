@@ -46,7 +46,7 @@ type PlaylistVideo struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Playlist represents a YouTube playlist with its videos
+// Playlist represents a video playlist with its videos
 type Playlist struct {
 	ID          string           `json:"id"`
 	Title       string           `json:"title"`

@@ -31,7 +31,7 @@ const (
 
 // URL templates
 const (
-	YouTubeVideoURLTemplate = "https://www.youtube.com/watch?v=%s"
+	VideoURLTemplate = "https://www.youtube.com/watch?v=%s"
 )
 
 // Playlist title constants
@@ -47,7 +47,7 @@ const (
 	TimeFormat       = "%02d"
 )
 
-// YTDLPParserService handles parsing of YouTube playlists using library
+// YTDLPParserService handles parsing of video playlists using library
 type YTDLPParserService struct {
 	timeout time.Duration
 }
@@ -64,7 +64,7 @@ func (y *YTDLPParserService) SetTimeout(timeout time.Duration) {
 	y.timeout = timeout
 }
 
-// ParsePlaylist parses a YouTube playlist and returns video information
+// ParsePlaylist parses a video playlist and returns video information
 func (y *YTDLPParserService) ParsePlaylist(ctx context.Context, url string) (*model.Playlist, error) {
 	// Validate URL
 	if !y.isValidPlaylistURL(url) {
@@ -90,7 +90,7 @@ func (y *YTDLPParserService) ParsePlaylist(ctx context.Context, url string) (*mo
 
 	videos := make([]*model.PlaylistVideo, 0, len(items))
 	for _, it := range items {
-		videoURL := fmt.Sprintf(YouTubeVideoURLTemplate, it.VideoID)
+		videoURL := fmt.Sprintf(VideoURLTemplate, it.VideoID)
 		v := &model.PlaylistVideo{
 			ID:        it.VideoID,
 			Title:     it.Title,
@@ -119,7 +119,7 @@ func (y *YTDLPParserService) ParsePlaylist(ctx context.Context, url string) (*mo
 	return playlist, nil
 }
 
-// isValidPlaylistURL checks if the URL is a valid YouTube playlist URL
+// isValidPlaylistURL checks if the URL is a valid video playlist URL
 func (y *YTDLPParserService) isValidPlaylistURL(url string) bool {
 	return strings.Contains(url, PlaylistParam)
 }
@@ -190,7 +190,7 @@ func (y *YTDLPParserService) parseYTDLPJSONOutput(output string) ([]*model.Playl
 		} else {
 			duration = DefaultDuration
 		}
-		videoURL := fmt.Sprintf(YouTubeVideoURLTemplate, id)
+		videoURL := fmt.Sprintf(VideoURLTemplate, id)
 		video := &model.PlaylistVideo{
 			ID:        id,
 			Title:     title,
