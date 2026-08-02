@@ -5,345 +5,167 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/ytget/yt-downloader)](https://github.com/ytget/yt-downloader)
 [![GitHub release](https://img.shields.io/github/v/release/ytget/yt-downloader?sort=semver)](https://github.com/ytget/yt-downloader/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows%20%7C%20Android-blue)](https://github.com/ytget/yt-downloader)
-[![GitHub issues](https://img.shields.io/github/issues/ytget/yt-downloader)](https://github.com/ytget/yt-downloader/issues)
-[![GitHub stars](https://img.shields.io/github/stars/ytget/yt-downloader?style=social)](https://github.com/ytget/yt-downloader/stargazers)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)](https://github.com/ytget/yt-downloader)
 
-Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust native Go integration.
+Lightweight cross-platform desktop app to download YouTube videos and playlists. Built with **Wails** (Go backend + web frontend) and a pure Go download engine.
 
 <div align="center">
     <img src="./yt-downloader.png" alt="yt-downloader" width="250" height="250" />
 </div>
 
-### Quick links
-- [Quick start](#quick-start)
-- [Usage](#usage)
-- [Screenshots](#screenshots)
-- [Configuration](#configuration-in-app-settings)
-- [Architecture overview](#architecture-overview)
-- [Download configuration](#download-configuration)
-- [Development](#development-makefile-driven)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-
-### Table of contents
-- [What is this?](#what-is-this)
-- [Purpose](#purpose)
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Supported platforms](#supported-platforms)
-- [Architecture overview](#architecture-overview)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [Usage](#usage)
-- [Configuration (in-app Settings)](#configuration-in-app-settings)
-- [Download configuration](#download-configuration)
-- [Development (Makefile driven)](#development-makefile-driven)
-- [Troubleshooting](#troubleshooting)
-- [Diagnostics and issue reporting](#diagnostics-and-issue-reporting)
-- [FAQ](#faq)
-- [Legal note](#legal-note)
-- [Open Source & License](#open-source--license)
-- [Roadmap (high level)](#roadmap-high-level)
-- [Contributing](#contributing)
-- [Acknowledgements](#acknowledgements)
-- [License](#license)
-
 ### What is this?
-yt-downloader is a GUI application written in Go using the Fyne toolkit. It downloads single videos and entire playlists from YouTube, shows live progress, and stores files in your Downloads folder by default.
-
-### Purpose
-- Provide a simple, reliable, cross‑platform YouTube downloader with a friendly UI.
-- Handle large playlists quickly using native Go parsing.
-- Offer sensible defaults with options for power users (quality presets, filename template, parallelism, language, auto-reveal on complete).
+yt-downloader is a desktop GUI application written in Go using [Wails](https://wails.io). It downloads single videos and entire playlists from YouTube, shows live progress, and stores files in your Downloads folder by default.
 
 ### Features
-- Best‑effort resilient downloads (continue, no-overwrite behavior).
+- Best-effort resilient downloads (continue, no-overwrite behavior).
 - Playlist parsing via native Go engine for speed and stability.
-- Live progress, speed, ETA; per-item Start/Pause/Stop, Open/Reveal, Copy path, Remove.
+- Live progress, speed, ETA; per-item Start/Pause, Open/Reveal, Remove.
 - Parallel downloads with configurable limit.
-- File naming template and quality presets (best/medium/audio).
-- Notifications on completion with quick actions.
-- Localization: System, English, Русский, Português.
-- Cross‑platform (macOS, Linux, Windows) using Fyne.
+- Quality presets (**best** / **medium**; audio-only not available yet — see [docs/QUALITY.md](docs/QUALITY.md)).
+- Download modes: **Video**, **Video + Transcript**, **Transcript only** (YouTube captions → `.srt` + `.txt`).
+- Auto language selection for captions; partial success if video works but captions are missing.
+- Queue restore, batch actions, support bundle, optional update check.
+- Localization: **Lietuvių** (default), English, Русский, Português, System.
+- Cross-platform desktop (macOS, Linux, Windows) via Wails webview.
 
 ### Screenshots
 
-#### Desktop (macOS, Linux, Windows)
-
 <div align="center">
   <p><strong>Playlist downloading with live progress tracking</strong></p>
-  <img src="./screenshots/screen-01-playlist-downloading.jpeg" alt="Playlist downloading UI" width="720" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
-  
-  <hr style="width: 60%; margin: 40px auto;" />
-  
+  <img src="./screenshots/screen-01-playlist-downloading.jpeg" alt="Playlist downloading UI" width="720" />
+
   <p><strong>Settings dialog with quality presets and localization</strong></p>
-  <img src="./screenshots/screen-02-settings.jpeg" alt="Settings dialog" width="720" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
-</div>
-
-<hr style="width: 80%; margin: 50px auto;" />
-
-#### Mobile (Android)
-
-<div align="center">
-  <p><strong>Completed downloads list</strong></p>
-  <img src="./screenshots/screen-03-android-downloaded-list.jpg" alt="Android - Downloaded list" width="360" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
-  
-  <hr style="width: 60%; margin: 40px auto;" />
-  
-  <p><strong>Download in progress with speed and ETA</strong></p>
-  <img src="./screenshots/screen-04-android-downloading-in-progress.jpg" alt="Android - Downloading in progress" width="360" style="border: 1px solid #ddd; border-radius: 4px; padding: 5px;" />
-  
-  <br/><br/>
-  <sub>Screens may vary slightly depending on OS and theme.</sub>
+  <img src="./screenshots/screen-02-settings.jpeg" alt="Settings dialog" width="720" />
 </div>
 
 ### Supported platforms
 - macOS 12+
-- Linux (X11/Wayland)
+- Linux (X11/Wayland, WebKitGTK)
 - Windows 10/11
-- Android 7.0+ (arm, arm64)
 
 ### Architecture overview
-- UI: Fyne (`internal/ui`) with a unified playlist view and task rows.
-- Downloads: `github.com/ytget/ytdlp` (pure Go engine) for single videos and playlists.
-- All processing handled by native Go library without external dependencies.
-- Settings: stored via Fyne preferences; sane defaults with runtime changes.
+- UI: Wails frontend (`frontend/`) talking to a Go `App` binding layer.
+- Downloads: `github.com/ytget/ytdlp/v2` (pure Go engine) for single videos, playlists, and captions.
+- Transcripts: caption fetch via ytdlp + `internal/transcript` writers (`.srt`, `.txt`).
+- Settings: JSON file under the user config directory.
+- Events: task progress and notifications are pushed to the UI over Wails events.
+
+> Note: `go.mod` may temporarily `replace` `github.com/ytget/ytdlp/v2` with a fork tag until upstream captions APIs are merged — see [docs/RELEASING.md](docs/RELEASING.md).
+
+### Documentation
+- [User guide](docs/USER_GUIDE.md) — modes, files, troubleshooting
+- [Architecture](docs/ARCHITECTURE.md) — packages and pipeline
+- [Captions](docs/CAPTIONS.md) · [Quality](docs/QUALITY.md) · [Network](docs/NETWORK.md)
+- [Packaging](docs/PACKAGING.md) · [Releasing](docs/RELEASING.md) · [Dependencies](docs/DEPENDENCIES.md)
+- [CHANGELOG](CHANGELOG.md) · [Stability backlog](docs/STABILITY_TASKS.md)
 
 ### Requirements
-- Go (matching `go.mod`, currently 1.24.x).
-- No external dependencies required for core functionality (all handled by pure Go engine).
-  - Optional but recommended: `ffmpeg` installed in PATH for muxing/format conversions.
+- Go (matching `go.mod`, currently 1.26.x).
+- Node.js 20+ (frontend build).
+- [Wails CLI](https://wails.io/docs/gettingstarted/installation) v2.
+- Platform webview deps (installed automatically on macOS/Windows; Linux needs WebKitGTK/GTK — see [docs/PACKAGING.md](docs/PACKAGING.md)).
+- Optional but recommended: `ffmpeg` installed in `PATH` for muxing/format conversions.
 
 ### Installation
 
 #### Download pre-built binaries
+Go to the [Releases page](https://github.com/ytget/yt-downloader/releases) and download the latest version for your platform.
 
-Go to the [Releases page](https://github.com/ytget/yt-downloader/releases) and download the latest version for your platform:
-
-- **macOS**: `yt-downloader_vX.X.X_darwin.zip` - unzip and drag `.app` to Applications
-- **Linux (amd64)**: `yt-downloader_vX.X.X_linux_amd64.tar.xz` - extract and run
-- **Windows (amd64)**: `yt-downloader_vX.X.X_windows_amd64.zip` - extract and run `.exe`
-- **Android**: `yt-downloader_vX.X.X_android_arm64.apk` - download and install APK
-  - For older devices: `yt-downloader_vX.X.X_android_arm.apk`
-
-#### Install via Homebrew (macOS)
-
-For macOS users, you can install yt-downloader using Homebrew:
-
+#### Install via Homebrew (macOS, GUI cask)
 ```bash
-# Add the tap and install
 brew tap ytget/yt-downloader
-brew install ytget/yt-downloader/yt-downloader
+brew install --cask yt-downloader
 ```
 
-Or in one command:
-```bash
-brew install ytget/yt-downloader/yt-downloader
-```
-
-**Note**: This installs the latest version from the main branch. For stable releases, use the pre-built binaries from the Releases page.
+There is **no CLI formula** for the Wails desktop app. The in-repo `Formula/yt-downloader-cli.rb` is deprecated on purpose. Cask zap paths match Wails settings under `~/Library/Application Support/yt-downloader/`.
 
 #### Build from source
-
-If you want to build from source:
-
-1. Clone the repository:
 ```bash
 git clone https://github.com/ytget/yt-downloader.git
 cd yt-downloader
-```
-
-2. Install dependencies:
-```bash
 make deps
-```
-
-3. Run the app:
-```bash
-make run
-```
-
-4. Or build binary:
-```bash
 make build
-# Binary will be in bin/yt-downloader
+# App binary / bundle is under build/bin/
 ```
 
 ### Quick start
-1) Install dependencies:
-2) Run the app:
-
-```
-make run
+```bash
+make deps
+make run   # wails dev
 ```
 
-3) Paste a YouTube URL (single video or a playlist with `list=`) and press Download.
+1. Paste a YouTube URL (single video or a playlist with `list=`).
+2. Press **Download**.
+3. Open **Settings** to change download folder, quality, parallelism, and language.
 
 ### Usage
 - Single video: paste the video URL and click Download.
-- Playlist: paste a URL containing `list=`; the app parses the list in background and then starts downloads (auto-start can apply).
-- Each item exposes actions: Start/Pause, Stop, Reveal in Finder/Explorer, Open, Copy path, Remove.
+- Playlist: paste a URL containing `list=`; the app parses the list in the background and starts downloads.
+- Each item exposes actions: Start/Pause, Reveal in Finder/Explorer, Open, Remove.
 
 ### Configuration (in-app Settings)
 - Download directory: defaults to the system Downloads folder.
 - Max parallel downloads: bounded to a safe range.
 - Quality preset: best, medium, audio.
 - Filename template: defaults to `%(title)s.%(ext)s`.
-- Language: System/English/Русский/Português.
+- Language: Lietuvių (default) / System / English / Русский / Português.
 - Auto reveal on complete: open file location automatically after download.
 
-### Download configuration
-For playlists and single videos, the app uses the native Go engine:
-- Fast playlist parsing with native Go implementation
-- Progressive download with resume capability
-- Continue partial downloads, avoid overwriting final files, prefer best MP4/WebM, and stream frequent progress updates for the UI.
+Settings are stored as JSON in the OS user config directory (`yt-downloader/settings.json`).
 
 ### Development (Makefile driven)
-Common tasks are exposed via the Makefile. See all commands:
-
-```
+```bash
 make help
 ```
 
 Key targets:
-- `run`: Run application (entrypoint `cmd/yt-downloader/main.go`).
-- `build`: Build binary to `bin/yt-downloader`.
-- `test`: Run tests.
-- `lint`: Run golangci-lint.
-- `format`: Apply goimports formatting.
-- `deps`: Download/tidy modules.
-- `deps-update`: Update modules.
-- `clean`: Remove build artifacts.
-- `docker-run` / `docker-stop`: Run/stop via docker-compose.
- - `debug`: Run app and tee logs to `debug.log` (useful for bug reports).
+- `run` / `dev`: Wails development mode with live reload
+- `build`: native production build for the current platform
+- `build-mac` / `build-linux` / `build-windows`: platform builds
+- `version` / `sync-version`: print / write `VERSION` into `wails.json`
+- `sign-mac` / `sign-windows`: optional code signing helpers (see `docs/PACKAGING.md`)
+- `test`: run Go tests
+- `frontend-typecheck`: `tsc --noEmit`
+- `lint`: `go vet`
+- `deps`: download Go modules + install frontend packages
+- `generate`: regenerate Wails TypeScript bindings
+- `debug`: run dev mode and tee logs to `debug.log`
+- `clean` / `clean-all`: remove build artifacts / node_modules
 
-Aliases:
-- `r` -> run, `t` -> test, `l` -> lint, `f` -> format, `dr` -> docker-run, `ds` -> docker-stop.
+Packaging, signing secrets, and Linux WebKitGTK notes: [docs/PACKAGING.md](docs/PACKAGING.md).
+
+### Project layout
+```text
+.
+├── main.go                 # Wails entrypoint
+├── app.go                  # Backend API bound to the frontend
+├── frontend/               # Vite + TypeScript UI
+├── internal/config         # JSON settings
+├── internal/download       # download service
+├── internal/model          # task/playlist models
+├── internal/platform       # OS helpers (open/reveal/paths)
+├── internal/compress       # optional compression helpers
+├── wails.json
+└── Makefile
+```
 
 ### Troubleshooting
 - Download issues: ensure network connectivity and valid URLs.
-- Playlist returns 0 items: verify the URL contains `list=`; some Mix/autoplay lists are special but still supported when `list=` is present.
-- Progress not showing 100%: for rare cases with unknown total size, completion will still flip the status to Completed.
+- Playlist returns 0 items: verify the URL contains `list=`.
+- Linux build fails on webview: install `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` (or 4.0).
 - macOS Gatekeeper: you may need to allow the app/network access depending on your environment.
 
-### Diagnostics and issue reporting
-When reporting a bug, please include:
-- Your OS and version, Go version.
-- Example URL(s) that reproduce the issue (video or playlist with `list=`).
-- Full app logs captured from a terminal session.
-
-How to capture logs:
-
-```
+Capture logs:
+```bash
 make debug
-# or manually
-make run 2>&1 | tee debug.log
 ```
-
-Before filing an issue, please:
-- Ensure you are using the latest version of the application.
-- Search existing issues to avoid duplicates.
-- Provide clear steps to reproduce and expected vs actual behavior.
-
-### Roadmap (high level)
-- More granular quality/format selection.
-- Persistent task history and resume between sessions.
-- Export/import playlist queues.
-- Theming and additional locales.
-
-### FAQ
-- Why no external dependencies? — The app uses a native Go engine for maximum compatibility and performance.
-- How do I update the app? — Pull the latest changes and rebuild, or download the latest release.
-- Where are files saved? — By default to the system Downloads folder; you can change it in Settings.
 
 ### Legal note
 This tool is intended for downloading content you have the rights to access. Respect platform Terms of Service and local laws.
 
-### Open Source & License
-- Purpose: deliver a friendly, cross‑platform GUI for downloading videos/playlists using Fyne and native Go engine, with focus on stability and UX.
-- License: MIT (see `LICENSE`).
-- Versioning: SemVer; releases are cut from tags `v*` (e.g., `v1.2.3`).
-- Transparency: roadmap and changes via GitHub Issues/PRs and release notes.
-- Security: report vulnerabilities privately (e.g., GitHub security advisories).
-
-### Contributing
-We welcome community contributions. Please follow the guidelines below.
-
-- Requirements
-  - Go: version from `go.mod`.
-  - All dependencies handled via Go modules.
-  - Recommended: `ffmpeg` in `PATH` for muxing/format conversions.
-
-- Quick start (development)
-  - Install dependencies: `make deps`
-  - Run the app: `make run` (or `make debug` to tee logs)
-  - Tests and lint: `make test` and `make lint`
-  - Compile binary: `make build` (outputs to `bin/`)
-
-- Branches and commits
-  - Branches: `feature/<ticket-or-topic>`, `hotfix/<ticket>`, `release/<version>`
-  - Commits: Conventional Commits + task ID when applicable. Example:
-    - `feat(PRJCT-13121): worker - fix time intervals (stability)`
-  - Keep messages short, in English.
-
-- Code style and rules
-  - Avoid `panic`; avoid `reflect`, `runtime`, `any/interface{}`; generics only when clearly justified.
-  - Propagate storage/database errors upward; do not swallow errors.
-  - Prefer `strings.Builder` for concatenation; for simple logs use `fmt.Sprintf`.
-  - Use clear names; early returns; explicit error handling.
-  - Formatting: `make format`; linting: `make lint`.
-
-- PR checklist
-  - `make lint` and `make test` are green.
-  - No unnecessary files/artifacts committed (`bin/`, `dist/`, `fyne-cross/` are ignored).
-  - Changes are focused and well-described in the PR.
-
-- How PRs are validated (CI)
-  - Workflow: `.github/workflows/build.yaml`
-    - Triggers: `pull_request` and `push` to `main`, `release/**`, `hotfix/**`, `feature/**` (docs are ignored via `paths-ignore`)
-    - Steps: `make lint`, `make test`, quick compile check `make build`
-    - `concurrency` cancels outdated runs on new pushes to the same ref
-  - Releases: `.github/workflows/release.yaml` (on tags `v*`)
-    - Cross-builds (Linux/Windows/Android/macOS), artifact aggregation
-    - Version embedded from tag: `-ldflags -X main.version=${GITHUB_REF_NAME#v}`
-    - `SHA256SUMS.txt` generated and attached to GitHub Release
-
-- How to help
-  - Report issues with logs (`make debug`), OS/Go versions, and reproducible URLs.
-  - Propose improvements: UX, localization, tests, docs.
-  - Smaller PRs are easier to review.
-
-- Code of Conduct
-  - Be respectful. Friendly, focused collaboration is appreciated.
+### License
+MIT (see `LICENSE` if present, otherwise repository license terms).
 
 ### Acknowledgements
-- `github.com/ytget/ytdlp` — native Go YouTube download engine.
-- `Fyne` — cross‑platform UI.
-- Pure Go implementation for maximum compatibility.
-- Inspiration from [`youtube-dl`](https://github.com/ytdl-org/youtube-dl) project and its excellent documentation structure.
-
-### License
-MIT License
-
-Copyright (c) 2025 yt-downloader contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
+- [Wails](https://wails.io) — Go + webview desktop framework
+- [ytdlp](https://github.com/ytget/ytdlp) — pure Go download engine

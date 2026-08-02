@@ -53,3 +53,9 @@ dist/
 debug.log
 *.app
 *.dmg
+
+# Wails
+frontend/node_modules/
+frontend/dist/
+build/bin/
+*.syso

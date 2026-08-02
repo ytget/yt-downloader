@@ -1,67 +1,62 @@
 package main
 
 import (
+	"embed"
 	"fmt"
+	"os"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
-	"github.com/ytget/yt-downloader/internal/compress"
-	"github.com/ytget/yt-downloader/internal/download"
-	"github.com/ytget/yt-downloader/internal/platform"
-	"github.com/ytget/yt-downloader/internal/ui"
+	"github.com/ytget/yt-downloader/internal/applog"
 )
 
 // Version is set during build via -ldflags "-X main.version=X.Y.Z"
 var version = "dev"
 
-const (
-	AppID   = "com.ytget.yt-downloader"
-	AppName = "YT Downloader"
-	AppIcon = "yt-downloader.png"
+//go:embed all:frontend/dist
+var assets embed.FS
 
-	WindowWidth  = 800
-	WindowHeight = 600
-)
+//go:embed build/appicon.png
+var icon []byte
 
 func main() {
-	// Log version information
+	// Early console logger until settings load configures file output.
+	_ = applog.Init(applog.Config{Level: applog.DefaultLevel, FileEnabled: false})
+	applog.Info("starting", "version", version)
 	fmt.Printf("YT Downloader v%s starting...\n", version)
 
-	// Initialize logo resource
-	if err := ui.InitLogoResource(); err != nil {
-		fmt.Printf("Warning: failed to initialize logo: %v\n", err)
-	}
+	app := NewApp(version)
 
-	// Create new Fyne app
-	myApp := app.NewWithID(AppID)
-
-	// Apply compact theme
-	myApp.Settings().SetTheme(ui.NewCompactTheme())
-
-	windowTitle := fmt.Sprintf("%s v%s", AppName, version)
-	myWindow := myApp.NewWindow(windowTitle)
-	myWindow.Resize(fyne.NewSize(WindowWidth, WindowHeight))
-
-	// Initialize services with default values
-	// Settings will be read when Download button is clicked
-	defaultDownloadsDir, err := platform.GetHomeDownloadsDir()
+	err := wails.Run(&options.App{
+		Title:     "YT Downloader",
+		Width:     920,
+		Height:    700,
+		MinWidth:  720,
+		MinHeight: 520,
+		AssetServer: &assetserver.Options{
+			Assets: assets,
+		},
+		BackgroundColour: &options.RGBA{R: 18, G: 18, B: 22, A: 255},
+		OnStartup:        app.startup,
+		OnBeforeClose:    app.beforeClose,
+		OnShutdown:       app.shutdown,
+		Bind: []interface{}{
+			app,
+		},
+		Mac: &mac.Options{
+			About: &mac.AboutInfo{
+				Title:   "YT Downloader",
+				Message: "Download YouTube videos and playlists",
+				Icon:    icon,
+			},
+		},
+	})
 	if err != nil {
-		fmt.Printf("failed to get downloads dir: %v\n", err)
-		defaultDownloadsDir = "/tmp/downloads"
+		applog.Error("wails exited", "err", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
-	if err := platform.CreateDirectoryIfNotExists(defaultDownloadsDir); err != nil {
-		fmt.Printf("failed to ensure downloads dir: %v\n", err)
-	}
-
-	downloadSvc := download.NewService(defaultDownloadsDir, 2) // Default values
-	downloadSvc.SetQualityPreset("best")                       // Default quality
-
-	compressSvc := compress.NewService()
-
-	// Create and setup UI
-	ui.NewRootUI(myWindow, myApp, downloadSvc, compressSvc)
-
-	// Show and run
-	myWindow.ShowAndRun()
 }

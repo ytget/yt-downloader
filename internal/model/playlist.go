@@ -12,6 +12,7 @@ const (
 	PlaylistStatusReady       PlaylistStatus = "ready"
 	PlaylistStatusDownloading PlaylistStatus = "downloading"
 	PlaylistStatusCompleted   PlaylistStatus = "completed"
+	PlaylistStatusCancelled   PlaylistStatus = "cancelled"
 	PlaylistStatusError       PlaylistStatus = "error"
 )
 
@@ -39,6 +40,7 @@ type PlaylistVideo struct {
 	Error      string      `json:"error,omitempty"`
 	OutputPath string      `json:"output_path,omitempty"` // Path to downloaded file
 	FileSize   int64       `json:"file_size,omitempty"`   // File size in bytes
+	TaskID     string      `json:"task_id,omitempty"`     // linked download task
 	// Runtime telemetry (mirrors DownloadTask fields)
 	Speed     string    `json:"speed,omitempty"`   // human readable speed (e.g., "1.2MB/s")
 	ETASec    int       `json:"eta_sec,omitempty"` // ETA in seconds, -1 if unknown
@@ -56,8 +58,15 @@ type Playlist struct {
 	TotalVideos int              `json:"total_videos"`
 	Downloaded  int              `json:"downloaded"`
 	Error       string           `json:"error,omitempty"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	// Mode/lang applied to each item task (not only service defaults at queue time).
+	Mode           DownloadMode `json:"mode,omitempty"`
+	TranscriptLang string       `json:"transcript_lang,omitempty"`
+	// SkipExisting marks items completed when collision policy would skip outputs.
+	SkipExisting bool `json:"skip_existing,omitempty"`
+	// Cancelled is set by CancelPlaylist; workers must stop scheduling new items.
+	Cancelled bool      `json:"cancelled,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // NewPlaylist creates a new playlist instance
