@@ -22,7 +22,8 @@ permissions:
   contents: read
 
 jobs:
-  ci-verify:
+  verify:
+    name: test-and-typecheck
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,38 +36,108 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Install system dependencies (GL/X11)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            xorg-dev \
-            libgl1-mesa-dev \
-            libegl1-mesa-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libxrandr-dev \
-            libxinerama-dev \
-            libxcursor-dev \
-            libxi-dev \
-            mesa-common-dev
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Install tools
-        run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - name: Install dependencies
+        run: make deps
 
-      - name: Lint
-        env:
-          CGO_ENABLED: 1
-        run: golangci-lint run --timeout=10m ./...
+      - name: Resolve version
+        id: ver
+        run: |
+          echo "version=$(make -s version)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify ytdlp dependency pin
+        run: make check-ytdlp-pin
+
+      - name: Vet
+        run: make vet
 
       - name: Test
         run: make test
 
-      - name: Build (compile check)
+      - name: Race tests
+        run: make race
+
+      - name: govulncheck
+        run: make govulncheck
+
+      - name: Frontend typecheck
+        run: make frontend-typecheck
+
+      - name: Frontend build
+        run: make frontend-build
+
+      - name: npm audit (high+)
+        run: make npm-audit
+
+      - name: Sync version metadata
+        run: make sync-version VERSION=${{ steps.ver.outputs.version }}
+
+  package-smoke:
+    name: package (${{ matrix.os }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            make_target: build-linux
+            artifact: artifacts-linux
+          - os: windows-latest
+            make_target: build-windows
+            artifact: artifacts-windows
+          - os: macos-latest
+            make_target: build-mac-arm64
+            artifact: artifacts-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Install Wails
+        shell: bash
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install dependencies
+        shell: bash
+        run: make deps
+
+      - name: Build package smoke
+        shell: bash
         run: |
           export VERSION="${GITHUB_SHA:0:7}"
-          make build
+          make ${{ matrix.make_target }} VERSION="$VERSION"
 
-  
-
-
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ github.sha }}
+          path: build/bin/**
+          if-no-files-found: error
+          retention-days: 7

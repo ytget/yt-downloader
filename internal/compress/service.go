@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,7 +135,8 @@ func (s *Service) startCompression(task *model.CompressionTask) {
 	// Get duration of input file for progress calculation
 	duration, err := s.getVideoDuration(task.InputPath)
 	if err != nil {
-		log.Printf("Failed to get video duration for %s: %v", task.InputPath, err)
+		// Duration probe failure is non-fatal; keep message short (no binary dumps).
+		fmt.Printf("compress: duration probe failed path=%s err=%v\n", task.InputPath, err)
 		s.setTaskError(task, err)
 		return
 	}

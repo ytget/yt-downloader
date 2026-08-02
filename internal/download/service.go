@@ -3,7 +3,6 @@ package download
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,10 +10,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ytget/yt-downloader/internal/applog"
+	"github.com/ytget/yt-downloader/internal/captions"
+	"github.com/ytget/yt-downloader/internal/fsutil"
 	"github.com/ytget/yt-downloader/internal/model"
+	"github.com/ytget/yt-downloader/internal/netutil"
 	"github.com/ytget/yt-downloader/internal/platform"
-	"github.com/ytget/ytdlp/types"
+	"github.com/ytget/yt-downloader/internal/transcript"
+	"github.com/ytget/yt-downloader/internal/urlutil"
 	"github.com/ytget/ytdlp/v2"
+	"github.com/ytget/ytdlp/v2/types"
 )
 
 // min returns the minimum of two integers
@@ -31,15 +36,17 @@ type Service struct {
 	tasksMutex  sync.RWMutex
 	maxParallel int
 	activeCount int
-	downloadDir string
 	onUpdate    func(*model.DownloadTask) // callback for UI updates
 
-	// Quality preset: "best" | "medium" | "audio"
-	qualityPreset string
+	// config contains settings used by workers. It is replaced as one snapshot
+	// so workers never observe a partially applied settings update.
+	config      ServiceConfig
+	configMutex sync.RWMutex
 
 	// Playlist support
 	playlists           map[string]*model.Playlist
 	playlistsMutex      sync.RWMutex
+	playlistStateMutex  sync.RWMutex // protects mutable playlist and video state
 	playlistQueue       chan *model.Playlist
 	maxPlaylistParallel int
 
@@ -55,6 +62,64 @@ type Service struct {
 
 	// stopModes remembers whether a stop request was a pause or a hard stop
 	stopModes map[string]StopMode
+
+	// Lifecycle
+	shuttingDown    bool
+	workerWG        sync.WaitGroup
+	queueStore      *QueueStore
+	persistSignal   chan struct{}
+	persistStop     chan struct{}
+	persistStopOnce sync.Once
+	persistWG       sync.WaitGroup
+
+	// Injectable engines (F1); default to ytdlp production impl.
+	media    MediaEngine
+	captions CaptionsEngine
+}
+
+// ServiceConfig contains runtime settings used by download workers.
+type ServiceConfig struct {
+	MaxParallel     int
+	DownloadDir     string
+	QualityPreset   string
+	DefaultMode     model.DownloadMode
+	TranscriptLang  string
+	CollisionPolicy fsutil.CollisionPolicy
+	DisableCaptions bool
+	VideoOnlySafe   bool
+}
+
+func (s *Service) configSnapshot() ServiceConfig {
+	s.configMutex.RLock()
+	defer s.configMutex.RUnlock()
+	return s.config
+}
+
+// ApplyConfig replaces all runtime download settings as one operation.
+func (s *Service) ApplyConfig(cfg ServiceConfig) {
+	if cfg.MaxParallel < 1 {
+		cfg.MaxParallel = 1
+	}
+	if cfg.MaxParallel > 10 {
+		cfg.MaxParallel = 10
+	}
+	cfg.QualityPreset = strings.ToLower(strings.TrimSpace(cfg.QualityPreset))
+	if cfg.QualityPreset != "best" && cfg.QualityPreset != "medium" && cfg.QualityPreset != "audio" {
+		cfg.QualityPreset = "best"
+	}
+	cfg.DefaultMode = normalizeMode(cfg.DefaultMode)
+	cfg.TranscriptLang = strings.TrimSpace(strings.ToLower(cfg.TranscriptLang))
+	if cfg.TranscriptLang == "auto" || cfg.TranscriptLang == "system" {
+		cfg.TranscriptLang = ""
+	}
+	cfg.CollisionPolicy = fsutil.NormalizeCollisionPolicy(cfg.CollisionPolicy)
+
+	s.tasksMutex.Lock()
+	s.maxParallel = cfg.MaxParallel
+	s.tasksMutex.Unlock()
+	s.configMutex.Lock()
+	s.config = cfg
+	s.configMutex.Unlock()
 }
 
 // SmoothingState holds data for smoothing UI updates over 1-second intervals
@@ -65,6 +130,9 @@ type SmoothingState struct {
 
 	// Timing
 	timer *time.Timer
+
+	// stopped prevents a fired timer callback from restarting after cleanup.
+	stopped bool
 
 	// Current smoothed values
 	smoothedSpeed   string // formatted speed string
@@ -151,6 +219,7 @@ func (s *Service) startSmoothingTimer(taskID string) {
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 
+	state.stopped = false
 	// Stop existing timer if any
 	if state.timer != nil {
 		state.timer.Stop()
@@ -169,6 +238,7 @@ func (s *Service) stopSmoothingTimer(taskID string) {
 
 	if state, ok := s.smoothingState[taskID]; ok {
 		state.mutex.Lock()
+		state.stopped = true
 		if state.timer != nil {
 			state.timer.Stop()
 			state.timer = nil
@@ -184,6 +254,13 @@ func (s *Service) updateSmoothedUI(taskID string) {
 	s.smoothingMutex.RUnlock()
 
 	if !exists {
+		return
+	}
+
+	state.mutex.Lock()
+	stopped := state.stopped
+	state.mutex.Unlock()
+	if stopped {
 		return
 	}
 
@@ -207,45 +284,101 @@ func (s *Service) updateSmoothedUI(taskID string) {
 	// Clear measurements for next interval
 	state.clearMeasurements()
 
-	// Restart timer if task is still downloading
+	// Restart timer if task is still downloading and smoothing was not stopped.
 	s.tasksMutex.RLock()
 	task, exists := s.tasks[taskID]
+	stillDownloading := exists && task.Status == model.TaskStatusDownloading
 	s.tasksMutex.RUnlock()
 
-	if exists && task.Status == model.TaskStatusDownloading {
-		state.mutex.Lock()
-		if state.timer != nil {
-			state.timer.Stop()
-		}
-		state.timer = time.AfterFunc(time.Second, func() {
-			s.updateSmoothedUI(taskID)
-		})
-		state.mutex.Unlock()
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+	if state.stopped || !stillDownloading {
+		return
 	}
+	if state.timer != nil {
+		state.timer.Stop()
+	}
+	state.timer = time.AfterFunc(time.Second, func() {
+		s.updateSmoothedUI(taskID)
+	})
 }
 
 // NewService creates a new download service
 func NewService(downloadDir string, maxParallel int) Downloader {
-	return &Service{
-		tasks:         make(map[string]*model.DownloadTask),
-		maxParallel:   maxParallel,
-		downloadDir:   downloadDir,
-		qualityPreset: "best",
-
-		// Playlist support
+	store, err := NewQueueStore()
+	if err != nil {
+		applog.Warn("queue store unavailable", "err", err)
+		store = nil
+	}
+	service := &Service{
+		tasks:       make(map[string]*model.DownloadTask),
+		maxParallel: maxParallel,
+		config: ServiceConfig{
+			MaxParallel:     maxParallel,
+			DownloadDir:     downloadDir,
+			QualityPreset:   "best",
+			DefaultMode:     model.DownloadModeVideo,
+			CollisionPolicy: fsutil.DefaultCollisionPolicy,
+		},
 		playlists:           make(map[string]*model.Playlist),
 		playlistQueue:       make(chan *model.Playlist, 10),
-		maxPlaylistParallel: 3, // Limit concurrent playlist downloads
-
+		maxPlaylistParallel: 3,
 		progressState: make(map[string]struct {
 			lastBytes int64
 			lastAt    time.Time
 		}),
-
 		smoothingState: make(map[string]*SmoothingState),
-
-		stopModes: make(map[string]StopMode),
+		stopModes:      make(map[string]StopMode),
+		queueStore:     store,
+		persistSignal:  make(chan struct{}, 1),
+		persistStop:    make(chan struct{}),
+		media:          NewYTDLPEngine(),
+		captions:       NewYTDLPEngine(),
 	}
+	service.persistWG.Add(1)
+	go service.persistenceLoop()
+	return service
+}
+
+// persistenceLoop coalesces update notifications before snapshotting the queue.
+func (s *Service) persistenceLoop() {
+	defer s.persistWG.Done()
+	for {
+		select {
+		case <-s.persistSignal:
+			s.schedulePersist()
+		case <-s.persistStop:
+			return
+		}
+	}
+}
+
+// SetMediaEngine replaces the media backend (tests).
+func (s *Service) SetMediaEngine(e MediaEngine) {
+	if e == nil {
+		return
+	}
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+	s.media = e
+}
+
+// SetCaptionsEngine replaces the captions backend (tests).
+func (s *Service) SetCaptionsEngine(e CaptionsEngine) {
+	if e == nil {
+		return
+	}
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+	s.captions = e
+}
+
+// SetFeatureFlags applies kill switches.
+func (s *Service) SetFeatureFlags(disableCaptions, videoOnlySafe bool) {
+	s.configMutex.Lock()
+	defer s.configMutex.Unlock()
+	s.config.DisableCaptions = disableCaptions
+	s.config.VideoOnlySafe = videoOnlySafe
 }
 
 // StopMode indicates intent behind cancellation
@@ -264,66 +397,162 @@ func (s *Service) SetUpdateCallback(callback func(*model.DownloadTask)) {
 
 // AddTask adds a new download task
 func (s *Service) AddTask(url string) (*model.DownloadTask, error) {
+	return s.AddTaskWithOptions(TaskOptions{URL: url})
+}
+
+// AddTaskWithOptions queues a task with explicit mode/language options.
+func (s *Service) AddTaskWithOptions(opts TaskOptions) (*model.DownloadTask, error) {
 	s.tasksMutex.Lock()
 	defer s.tasksMutex.Unlock()
 
-	// Check for duplicate URLs
-	for _, task := range s.tasks {
-		if task.URL == url && !task.Status.IsFinished() {
-			return nil, fmt.Errorf("task already exists for URL: %s", url)
+	url := strings.TrimSpace(opts.URL)
+	if url == "" {
+		return nil, fmt.Errorf("url is required")
+	}
+
+	// Duplicate URL policy:
+	// - Reject while a non-terminal task exists for the same URL (pending/active/paused).
+	// - Allow intentional re-download when prior task is Completed/Stopped/Error.
+	if existing := s.findOpenTaskByURLLocked(url); existing != nil {
+		return nil, fmt.Errorf("task already exists for URL: %s (id=%s status=%s)", url, existing.ID, existing.Status)
+	}
+
+	cfg := s.configSnapshot()
+	mode := opts.Mode
+	if mode == "" {
+		mode = cfg.DefaultMode
+	}
+	mode = normalizeMode(mode)
+	// Kill switches: force video-only / disable captions paths.
+	if cfg.VideoOnlySafe || cfg.DisableCaptions {
+		if mode == model.DownloadModeVideoAndTranscript || mode == model.DownloadModeTranscriptOnly {
+			if cfg.VideoOnlySafe {
+				mode = model.DownloadModeVideo
+			} else if mode == model.DownloadModeTranscriptOnly {
+				return nil, fmt.Errorf("captions are disabled in settings")
+			} else {
+				mode = model.DownloadModeVideo
+			}
 		}
 	}
 
+	lang := strings.TrimSpace(opts.TranscriptLang)
+	if lang == "" {
+		lang = cfg.TranscriptLang
+	}
+
+	transcriptStatus := model.TranscriptStatusNone
+	if mode == model.DownloadModeVideoAndTranscript || mode == model.DownloadModeTranscriptOnly {
+		transcriptStatus = model.TranscriptStatusPending
+	}
+
 	task := &model.DownloadTask{
-		ID:        generateTaskID(),
-		URL:       url,
-		Title:     "", // Leave empty; UI will fallback to URL until real title arrives
-		Status:    model.TaskStatusPending,
-		Progress:  0.0,
-		Percent:   0,
-		ETASec:    -1,
-		StartedAt: time.Now(),
+		ID:               generateTaskID(),
+		URL:              url,
+		Title:            "", // Leave empty; UI will fallback to URL until real title arrives
+		Status:           model.TaskStatusPending,
+		Phase:            model.TaskPhaseQueued,
+		Progress:         0.0,
+		Percent:          0,
+		ETASec:           -1,
+		StartedAt:        time.Now(),
+		Mode:             mode,
+		TranscriptStatus: transcriptStatus,
+		TranscriptLang:   lang,
+		AudioLanguage:    strings.TrimSpace(opts.AudioLanguage),
 	}
 
+	if s.shuttingDown {
+		return nil, fmt.Errorf("service is shutting down")
+	}
 	s.tasks[task.ID] = task
-
-	// Try to start task if we have capacity
-	if s.activeCount < s.maxParallel {
-		go s.startTask(task)
-	}
+	s.queueStartLocked(task)
 
 	return task, nil
 }
 
-// GetTask returns a task by ID
+// findOpenTaskByURLLocked returns a non-terminal task for url (caller holds tasksMutex).
+func (s *Service) findOpenTaskByURLLocked(url string) *model.DownloadTask {
+	for _, task := range s.tasks {
+		if task.URL != url {
+			continue
+		}
+		// Paused is not IsFinished but still "owns" the URL until removed/restarted.
+		if !task.Status.IsFinished() {
+			return task
+		}
+	}
+	return nil
+}
+
+func normalizeMode(mode model.DownloadMode) model.DownloadMode {
+	switch mode {
+	case model.DownloadModeVideo, model.DownloadModeVideoAndTranscript, model.DownloadModeTranscriptOnly:
+		return mode
+	default:
+		return model.DownloadModeVideo
+	}
+}
+
+// transitionTaskLocked applies the common status/phase bookkeeping. The caller
+// must hold tasksMutex; workers own the live task objects.
+func transitionTaskLocked(task *model.DownloadTask, status model.TaskStatus, phase model.TaskPhase) {
+	if task == nil {
+		return
+	}
+	task.Status = status
+	if phase != "" {
+		task.Phase = phase
+	}
+	if status.IsFinished() {
+		task.FinishedAt = time.Now()
+	}
+}
+
+// cloneTask creates a detached task snapshot for callers outside the service.
+// Download workers retain ownership of the live task objects.
+func cloneTask(task *model.DownloadTask) *model.DownloadTask {
+	if task == nil {
+		return nil
+	}
+	copy := *task
+	return &copy
+}
+
+// GetTask returns a detached task snapshot by ID.
 func (s *Service) GetTask(id string) (*model.DownloadTask, bool) {
 	s.tasksMutex.RLock()
 	defer s.tasksMutex.RUnlock()
 	task, exists := s.tasks[id]
-	return task, exists
+	if !exists {
+		return nil, false
+	}
+	return cloneTask(task), true
 }
 
-// GetAllTasks returns all tasks
+// GetAllTasks returns detached task snapshots.
 func (s *Service) GetAllTasks() []*model.DownloadTask {
 	s.tasksMutex.RLock()
 	defer s.tasksMutex.RUnlock()
 
 	tasks := make([]*model.DownloadTask, 0, len(s.tasks))
 	for _, task := range s.tasks {
-		tasks = append(tasks, task)
+		if snapshot := cloneTask(task); snapshot != nil {
+			tasks = append(tasks, snapshot)
+		}
 	}
 	return tasks
 }
 
-// GetTaskByVideoID returns a task by extracted YouTube video ID from its URL
-// This is useful for playlist UI rows which use the plain YouTube ID as row identifier
+// GetTaskByVideoID returns a detached task snapshot by extracted video ID.
+// This is useful for playlist UI rows which use the plain YouTube ID as row identifier.
 func (s *Service) GetTaskByVideoID(videoID string) (*model.DownloadTask, bool) {
 	s.tasksMutex.RLock()
 	defer s.tasksMutex.RUnlock()
 
 	for _, task := range s.tasks {
 		if s.extractVideoID(task.URL) == videoID {
-			return task, true
+			return cloneTask(task), true
 		}
 	}
 	return nil, false
@@ -340,14 +569,14 @@ func (s *Service) StopTask(id string) error {
 		return fmt.Errorf("task not found: %s", id)
 	}
 
-	log.Printf("StopTask called for task %s with status: %s", id, task.Status)
+	applog.WithTask(id).Info("stop requested", "status", string(task.Status))
 
 	// If task is pending, paused, or in error state, resolve to Stopped immediately
 	if task.Status == model.TaskStatusPending ||
 		task.Status == model.TaskStatusPaused ||
 		task.Status == model.TaskStatusError {
-		log.Printf("Task %s: converting from %s to Stopped immediately", id, task.Status)
-		task.Status = model.TaskStatusStopped
+		applog.WithTask(id).Info("stop immediate", "from", string(task.Status))
+		transitionTaskLocked(task, model.TaskStatusStopped, model.TaskPhaseDone)
 		task.LastError = "" // Clear error when converting to stopped
 		delete(s.stopModes, id)
 		s.notifyUpdate(task)
@@ -355,14 +584,14 @@ func (s *Service) StopTask(id string) error {
 	}
 
 	if !task.Status.IsActive() {
-		log.Printf("Task %s: already in terminal state %s, no-op", id, task.Status)
+		applog.WithTask(id).Debug("stop no-op", "status", string(task.Status))
 		// Already in terminal state or not stoppable; treat as no-op
 		return nil
 	}
 
-	log.Printf("Task %s: setting status to Stopping and marking as hard stop", id)
+	applog.WithTask(id).Info("stopping active task")
 	// Set stopping status and mark mode as hard stop
-	task.Status = model.TaskStatusStopping
+	transitionTaskLocked(task, model.TaskStatusStopping, "")
 	s.stopModes[id] = StopModeStop
 	s.notifyUpdate(task)
 
@@ -386,7 +615,7 @@ func (s *Service) PauseTask(id string) error {
 		return nil
 	}
 
-	task.Status = model.TaskStatusStopping
+	transitionTaskLocked(task, model.TaskStatusStopping, "")
 	s.stopModes[id] = StopModePause
 	s.notifyUpdate(task)
 	return nil
@@ -408,20 +637,21 @@ func (s *Service) ResumeTask(id string) error {
 		return fmt.Errorf("task is not paused: %s", task.Status)
 	}
 
-	// Reset to pending state
+	// Keep OutputPath so the engine can resume from partial/.part files.
 	task.Status = model.TaskStatusPending
-	task.StartedAt = time.Now() // Update start time for new attempt
+	task.LastError = ""
+	task.Warning = ""
+	task.StartedAt = time.Now()
+	task.FinishedAt = time.Time{}
+	delete(s.stopModes, id)
 	s.notifyUpdate(task)
-
-	// Try to start if we have capacity
-	if s.activeCount < s.maxParallel {
-		go s.startTask(task)
-	}
+	s.queueStartLocked(task)
 
 	return nil
 }
 
-// RestartTask restarts a failed or stopped task
+// RestartTask restarts a failed, stopped, paused, or pending task from scratch.
+// Unlike ResumeTask, restart clears media/transcript outputs and warnings.
 func (s *Service) RestartTask(id string) error {
 	s.tasksMutex.Lock()
 	defer s.tasksMutex.Unlock()
@@ -439,27 +669,116 @@ func (s *Service) RestartTask(id string) error {
 		return fmt.Errorf("task cannot be restarted in status: %s", task.Status)
 	}
 
-	// Reset task state
-	task.Status = model.TaskStatusPending
-	task.Progress = 0.0
-	task.Percent = 0
-	task.LastError = ""
-	task.Speed = ""
-	task.ETASec = -1
-	task.StartedAt = time.Now()
-	task.FinishedAt = time.Time{}
-
+	s.resetTaskForRestartLocked(task)
 	s.notifyUpdate(task)
-
-	// Try to start if we have capacity
-	if s.activeCount < s.maxParallel {
-		go s.startTask(task)
-	}
+	s.queueStartLocked(task)
 
 	return nil
 }
 
-// RemoveTask removes a task from the service
+// resetTaskForRestartLocked clears progress and outputs for a clean re-download.
+func (s *Service) resetTaskForRestartLocked(task *model.DownloadTask) {
+	task.Status = model.TaskStatusPending
+	task.Phase = model.TaskPhaseQueued
+	task.Progress = 0.0
+	task.Percent = 0
+	task.LastError = ""
+	task.Warning = ""
+	task.Speed = ""
+	task.ETASec = -1
+	task.StartedAt = time.Now()
+	task.FinishedAt = time.Time{}
+	task.OutputPath = ""
+	task.FileSize = 0
+	task.TranscriptSRTPath = ""
+	task.TranscriptTXTPath = ""
+	task.TranscriptError = ""
+
+	mode := normalizeMode(task.Mode)
+	task.Mode = mode
+	switch mode {
+	case model.DownloadModeVideoAndTranscript, model.DownloadModeTranscriptOnly:
+		task.TranscriptStatus = model.TranscriptStatusPending
+	default:
+		task.TranscriptStatus = model.TranscriptStatusNone
+	}
+
+	delete(s.stopModes, task.ID)
+	delete(s.progressState, task.ID)
+}
+
+// RetryTranscript re-fetches captions for an existing task without re-downloading media.
+// Allowed when the task is terminal (Completed/Error/Stopped/Paused) and not actively running.
+func (s *Service) RetryTranscript(id string) error {
+	s.tasksMutex.Lock()
+	task, exists := s.tasks[id]
+	if !exists {
+		s.tasksMutex.Unlock()
+		return fmt.Errorf("task not found: %s", id)
+	}
+	if task.Status.IsActive() {
+		s.tasksMutex.Unlock()
+		return fmt.Errorf("task is still active")
+	}
+	// Promote video-only tasks so partial success UI applies after captions land.
+	if task.Mode == model.DownloadModeVideo {
+		task.Mode = model.DownloadModeVideoAndTranscript
+	}
+	if task.Mode != model.DownloadModeVideoAndTranscript && task.Mode != model.DownloadModeTranscriptOnly {
+		s.tasksMutex.Unlock()
+		return fmt.Errorf("task mode does not support transcripts")
+	}
+	baseName := "video"
+	if task.OutputPath != "" {
+		base := filepath.Base(task.OutputPath)
+		baseName = strings.TrimSuffix(base, filepath.Ext(base))
+	} else if title := strings.TrimSpace(task.Title); title != "" && !strings.HasPrefix(title, "http") {
+		baseName = s.sanitizeFilename(title)
+	}
+	task.TranscriptStatus = model.TranscriptStatusPending
+	task.TranscriptError = ""
+	task.TranscriptSRTPath = ""
+	task.TranscriptTXTPath = ""
+	task.Warning = ""
+	s.tasksMutex.Unlock()
+	s.notifyUpdate(task)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		s.fetchAndWriteTranscript(ctx, task, baseName)
+
+		s.tasksMutex.Lock()
+		defer s.tasksMutex.Unlock()
+		switch task.TranscriptStatus {
+		case model.TranscriptStatusCompleted:
+			task.Warning = ""
+			if task.Status == model.TaskStatusError && task.OutputPath != "" {
+				task.Status = model.TaskStatusCompleted
+				task.LastError = ""
+			}
+			if task.Mode == model.DownloadModeTranscriptOnly && task.OutputPath == "" {
+				task.OutputPath = task.TranscriptTXTPath
+			}
+			if task.Status != model.TaskStatusCompleted && task.OutputPath != "" {
+				task.Status = model.TaskStatusCompleted
+			}
+		default:
+			if task.Status == model.TaskStatusCompleted {
+				if task.TranscriptError != "" {
+					task.Warning = "Video downloaded, but transcript failed: " + task.TranscriptError
+				} else {
+					task.Warning = "Video downloaded, but no captions were available"
+				}
+			}
+		}
+		s.notifyUpdate(task)
+	}()
+	return nil
+}
+
+// RemoveTask removes a task from the service.
+// If the task is downloading, it is cancelled first so the worker frees its slot.
 func (s *Service) RemoveTask(id string) error {
 	s.tasksMutex.Lock()
 	defer s.tasksMutex.Unlock()
@@ -469,60 +788,189 @@ func (s *Service) RemoveTask(id string) error {
 		return fmt.Errorf("task not found: %s", id)
 	}
 
-	// Stop the task if it's active
+	// Cancel in-flight work without mutating the live task after it may have
+	// been handed to a worker. The worker watches stopModes and cancels its
+	// context; avoiding the write here keeps detached update snapshots safe.
 	if task.Status.IsActive() {
-		task.Status = model.TaskStatusStopping
-		s.notifyUpdate(task)
+		s.stopModes[id] = StopModeStop
 	}
 
-	// Remove from tasks map
 	delete(s.tasks, id)
+	delete(s.progressState, id)
+	// Keep stopModes until worker observes cancel so pause vs stop intent is preserved
+	// for the still-running goroutine; cleaned in cleanupTaskRuntimeLocked.
+	s.stopSmoothingTimerLocked(id)
 
 	return nil
 }
 
-// startTask starts downloading a task
+// queueStartLocked starts task when capacity allows (caller holds tasksMutex).
+func (s *Service) queueStartLocked(task *model.DownloadTask) {
+	if task == nil || task.Status != model.TaskStatusPending {
+		return
+	}
+	if s.activeCount >= s.maxParallel {
+		return
+	}
+	if _, ok := s.tasks[task.ID]; !ok {
+		return
+	}
+	// Claim before spawning to prevent double-start races.
+	transitionTaskLocked(task, model.TaskStatusStarting, model.TaskPhaseResolving)
+	s.activeCount++
+	s.workerWG.Add(1)
+	go func(t *model.DownloadTask) {
+		defer s.workerWG.Done()
+		s.runTask(t)
+	}(task)
+}
+
+// startTask is kept as a thin wrapper for older call sites/tests.
 func (s *Service) startTask(task *model.DownloadTask) {
 	s.tasksMutex.Lock()
-	s.activeCount++
-	task.Status = model.TaskStatusStarting
+	if _, ok := s.tasks[task.ID]; !ok {
+		s.tasksMutex.Unlock()
+		return
+	}
+	if task.Status != model.TaskStatusPending && task.Status != model.TaskStatusStarting {
+		s.tasksMutex.Unlock()
+		return
+	}
+	if task.Status == model.TaskStatusPending {
+		if s.activeCount >= s.maxParallel {
+			s.tasksMutex.Unlock()
+			return
+		}
+		task.Status = model.TaskStatusStarting
+		s.activeCount++
+	}
+	// If already Starting, activeCount was claimed by queueStartLocked.
 	s.tasksMutex.Unlock()
+	// startTask is sometimes called inline from tests; still track WaitGroup when claimed here.
+	s.runTask(task)
+}
+
+// shouldAbort reports whether the worker should exit without further I/O.
+func (s *Service) shouldAbort(task *model.DownloadTask) bool {
+	s.tasksMutex.RLock()
+	defer s.tasksMutex.RUnlock()
+	if _, ok := s.tasks[task.ID]; !ok {
+		return true
+	}
+	return task.Status == model.TaskStatusStopping || task.Status.IsFinished() || task.Status == model.TaskStatusPaused
+}
+
+// finalizeAbort applies pause/stop terminal state when exiting before I/O completes.
+func (s *Service) finalizeAbort(task *model.DownloadTask) {
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+	if _, ok := s.tasks[task.ID]; !ok {
+		return
+	}
+	mode := s.stopModes[task.ID]
+	switch {
+	case mode == StopModePause || task.Status == model.TaskStatusPaused:
+		transitionTaskLocked(task, model.TaskStatusPaused, model.TaskPhaseDone)
+	case task.Status == model.TaskStatusStopping || mode == StopModeStop:
+		transitionTaskLocked(task, model.TaskStatusStopped, model.TaskPhaseDone)
+	case task.Status.IsFinished():
+		// already terminal
+	default:
+		// Removed-from-map races handled above; keep status if still pending/starting.
+	}
+	if !task.Status.IsFinished() {
+		task.FinishedAt = time.Now()
+	}
+	delete(s.stopModes, task.ID)
+	s.notifyUpdate(task)
+}
+
+// finishWorker releases the concurrency slot and starts the next queued task.
+func (s *Service) finishWorker(task *model.DownloadTask) {
+	s.tasksMutex.Lock()
+	s.activeCount--
+	if s.activeCount < 0 {
+		s.activeCount = 0
+	}
+	s.cleanupTaskRuntimeLocked(task.ID)
+	s.tasksMutex.Unlock()
+	s.startNextPendingTask()
+}
+
+// cleanupTaskRuntimeLocked drops per-task runtime maps (caller holds tasksMutex).
+func (s *Service) cleanupTaskRuntimeLocked(taskID string) {
+	// Only clear stopModes when task is no longer active in the map or is terminal.
+	if task, ok := s.tasks[taskID]; ok {
+		if task.Status.IsActive() {
+			return
+		}
+	}
+	delete(s.stopModes, taskID)
+	delete(s.progressState, taskID)
+	s.stopSmoothingTimerLocked(taskID)
+}
+
+// stopSmoothingTimerLocked stops smoothing without taking smoothingMutex around tasksMutex incorrectly.
+// Safe to call with or without tasksMutex; takes smoothingMutex.
+func (s *Service) stopSmoothingTimerLocked(taskID string) {
+	s.stopSmoothingTimer(taskID)
+	s.smoothingMutex.Lock()
+	delete(s.smoothingState, taskID)
+	s.smoothingMutex.Unlock()
+}
+
+// runTask performs download/captions work for a claimed task (activeCount already incremented).
+func (s *Service) runTask(task *model.DownloadTask) {
+	s.tasksMutex.Lock()
+	mode := normalizeMode(task.Mode)
+	task.Mode = mode
+	_, stillTracked := s.tasks[task.ID]
+	s.tasksMutex.Unlock()
+
+	if !stillTracked {
+		// Removed after claim — free slot without network work.
+		s.finishWorker(task)
+		return
+	}
 
 	s.notifyUpdate(task)
 
+	defer s.finishWorker(task)
 	defer func() {
-		s.tasksMutex.Lock()
-		s.activeCount--
-		s.tasksMutex.Unlock()
-
-		// Try to start next pending task
-		s.startNextPendingTask()
+		if r := recover(); r != nil {
+			applog.WithTask(task.ID).Error("worker panic", "panic", fmt.Sprint(r))
+			s.finishTaskError(task, fmt.Sprintf("internal error: %v", r))
+		}
 	}()
 
-	// Update status to downloading
 	s.tasksMutex.Lock()
+	// Re-check under lock before marking Downloading (remove/pause race).
+	if _, ok := s.tasks[task.ID]; !ok || task.Status == model.TaskStatusStopping {
+		s.tasksMutex.Unlock()
+		s.finalizeAbort(task)
+		return
+	}
 	task.Status = model.TaskStatusDownloading
+	task.Phase = model.TaskPhaseResolving
 	s.tasksMutex.Unlock()
 	s.notifyUpdate(task)
 
-	// Start smoothing timer for this task
 	s.startSmoothingTimer(task.ID)
+	defer s.stopSmoothingTimer(task.ID)
 
-	log.Printf("Starting download for task %s: %s", task.ID, task.URL)
+	applog.WithTask(task.ID).Info("task start", "mode", string(mode), "url", task.URL)
 
-	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Monitor for stop requests
 	go func() {
 		for {
 			s.tasksMutex.RLock()
 			status := task.Status
+			_, stopped := s.stopModes[task.ID]
+			shutting := s.shuttingDown
 			s.tasksMutex.RUnlock()
-
-			if status == model.TaskStatusStopping {
-				log.Printf("Task %s requested to stop, canceling download", task.ID)
+			if status == model.TaskStatusStopping || stopped || shutting {
 				cancel()
 				return
 			}
@@ -533,108 +981,128 @@ func (s *Service) startTask(task *model.DownloadTask) {
 		}
 	}()
 
-	// Configure new ytdlp downloader (pure Go)
-	quality := "best"
-	ext := ""
-	switch s.qualityPreset {
-	case "best":
-		quality, ext = "best", ""
-	case "medium":
-		quality, ext = "height<=480", ""
-	case "audio":
-		quality, ext = "best", "" // MVP: keep progressive best; audio-only later
+	needMedia := mode == model.DownloadModeVideo || mode == model.DownloadModeVideoAndTranscript
+	needTranscript := mode == model.DownloadModeVideoAndTranscript || mode == model.DownloadModeTranscriptOnly
+
+	// Path safety before any network I/O that writes outputs.
+	cfg := s.configSnapshot()
+	outDir := cfg.DownloadDir
+	policy := cfg.CollisionPolicy
+	if err := fsutil.EnsureWritableDir(outDir); err != nil {
+		s.finishTaskError(task, err.Error())
+		return
 	}
-
-	d := ytdlp.New().WithFormat(quality, ext)
-
-	// Resolve metadata and select format to compute output path
-	_, info, resErr := d.ResolveURL(ctx, task.URL)
-	if resErr != nil {
-		// Handle ResolveURL error immediately
-		log.Printf("ResolveURL failed for task %s: %v", task.ID, resErr)
-
-		s.tasksMutex.Lock()
-		task.Status = model.TaskStatusError
-		task.LastError = s.parseYouTubeError(resErr)
-		task.FinishedAt = time.Now()
-		s.tasksMutex.Unlock()
-		s.notifyUpdate(task)
+	if needMedia {
+		if err := fsutil.CheckFreeSpace(outDir, fsutil.DefaultMinFreeBytes); err != nil {
+			s.finishTaskError(task, err.Error())
+			return
+		}
+	}
+	if s.shouldAbort(task) {
+		s.finalizeAbort(task)
 		return
 	}
 
-	// Compute output file path
-	outputPath := s.downloadDir
-	if info != nil {
-		base := strings.TrimSpace(info.Title)
-		if base == "" {
-			base = "video"
+	var (
+		info       *ytdlp.VideoInfo
+		outputPath string
+		mediaErr   error
+		baseName   = "video"
+	)
+
+	if needMedia {
+		quality, ext := s.formatForPreset()
+		s.tasksMutex.RLock()
+		mediaEng := s.media
+		s.tasksMutex.RUnlock()
+		if mediaEng == nil {
+			mediaEng = NewYTDLPEngine()
 		}
-		base = s.sanitizeFilename(base)
-		extGuess := s.guessExtFromFormats(info.Formats)
-		if extGuess == "" {
-			extGuess = "mp4"
+
+		s.setPhase(task, model.TaskPhaseResolving)
+		resolveCtx, resolveCancel := netutil.WithTimeout(ctx, netutil.DefaultResolveTimeout)
+		resErr := netutil.Do(resolveCtx, netutil.DefaultRetry(), func(c context.Context) error {
+			resolvedInfo, err := mediaEng.Resolve(c, MediaRequest{
+				URL:           task.URL,
+				Quality:       quality,
+				Ext:           ext,
+				AudioLanguage: task.AudioLanguage,
+			})
+			if err != nil {
+				return err
+			}
+			info = resolvedInfo
+			return nil
+		})
+		resolveCancel()
+		if resErr != nil {
+			if s.applyStopOrError(task, ctx, resErr) {
+				return
+			}
+			s.finishTaskError(task, s.parseYouTubeError(resErr))
+			return
 		}
-		outputPath = filepath.Join(s.downloadDir, base+"."+extGuess)
-	}
+		if info != nil && strings.TrimSpace(info.Title) != "" {
+			baseName = s.sanitizeFilename(info.Title)
+			s.tasksMutex.Lock()
+			task.Title = info.Title
+			s.tasksMutex.Unlock()
+			s.notifyUpdate(task)
+		}
 
-	// If file already exists and has size, short-circuit
-	if fi, statErr := os.Stat(outputPath); statErr == nil && fi.Size() > 0 {
-		s.tasksMutex.Lock()
-		task.Status = model.TaskStatusCompleted
-		task.Progress = 1.0
-		task.Percent = 100
-		task.OutputPath = outputPath
-		s.tasksMutex.Unlock()
-		s.notifyUpdate(task)
-		return
-	}
-
-	// Set progress callback and output path
-	d = d.WithOutputPath(outputPath).WithProgress(func(p ytdlp.Progress) {
-		s.updateTaskProgressFromNew(task, p)
-	})
-
-	// Expose expected output early (for UI actions like copy path)
-	s.tasksMutex.Lock()
-	task.OutputPath = outputPath
-	s.tasksMutex.Unlock()
-	s.notifyUpdate(task)
-
-	// Start download
-	info, err := d.Download(ctx, task.URL)
-
-	// Update final status
-	s.tasksMutex.Lock()
-	if err != nil {
-		mode, wasStopped := s.stopModes[task.ID]
-		if wasStopped {
-			if mode == StopModePause {
-				task.Status = model.TaskStatusPaused
-			} else {
-				task.Status = model.TaskStatusStopped
+		extGuess := "mp4"
+		if info != nil {
+			if g := s.guessExtFromFormats(info.Formats); g != "" {
+				extGuess = g
 			}
-			delete(s.stopModes, task.ID)
-		} else if ctx.Err() == context.Canceled {
-			if mode := s.stopModes[task.ID]; mode == StopModePause {
-				task.Status = model.TaskStatusPaused
-			} else {
-				task.Status = model.TaskStatusStopped
-			}
-			delete(s.stopModes, task.ID)
+		}
+		desiredPath := filepath.Join(outDir, baseName+"."+extGuess)
+		resolved, collErr := fsutil.ResolveCollision(desiredPath, policy)
+		if collErr != nil {
+			s.finishTaskError(task, collErr.Error())
+			return
+		}
+		outputPath = resolved.Path
+
+		if resolved.Skip {
+			// Existing non-empty file — treat as already downloaded.
+			s.tasksMutex.Lock()
+			task.OutputPath = outputPath
+			task.Progress = 1.0
+			task.Percent = 100
+			s.tasksMutex.Unlock()
 		} else {
-			task.Status = model.TaskStatusError
-			task.LastError = s.parseYouTubeError(err)
+			s.setPhase(task, model.TaskPhaseDownloading)
+			s.tasksMutex.Lock()
+			task.OutputPath = outputPath
+			s.tasksMutex.Unlock()
+			s.notifyUpdate(task)
+
+			// Long media transfer: retry only a couple times on transient start failures.
+			mediaErr = netutil.Do(ctx, netutil.RetryConfig{Attempts: 2, Base: time.Second, MaxDelay: 5 * time.Second}, func(c context.Context) error {
+				var err error
+				info, err = mediaEng.Download(c, MediaRequest{
+					URL:           task.URL,
+					Quality:       quality,
+					Ext:           ext,
+					OutputPath:    outputPath,
+					AudioLanguage: task.AudioLanguage,
+					OnProgress: func(p ytdlp.Progress) {
+						s.updateTaskProgressFromNew(task, p)
+					},
+				})
+				return err
+			})
+			if mediaErr != nil {
+				if s.applyStopOrError(task, ctx, mediaErr) {
+					return
+				}
+				s.finishTaskError(task, s.parseYouTubeError(mediaErr))
+				return
+			}
 		}
-	} else {
-		task.Status = model.TaskStatusCompleted
-		task.Progress = 1.0
-		task.Percent = 100
-		// Derive final output path: if WithOutputPath was a directory, library created file inside
-		if task.OutputPath == "" {
-			// Progress callback may have set OutputPath via probing; we will resolve on disk scan below
-			_ = info // info is available for potential future use
-		}
-		// Resolve absolute/clean path if present
+
+		s.tasksMutex.Lock()
 		if task.OutputPath != "" {
 			if !filepath.IsAbs(task.OutputPath) {
 				if abs, e := filepath.Abs(task.OutputPath); e == nil {
@@ -643,24 +1111,253 @@ func (s *Service) startTask(task *model.DownloadTask) {
 			}
 			task.OutputPath = filepath.Clean(task.OutputPath)
 		}
-		// Update title from info
-		if info != nil && info.Title != "" && (task.Title == "" || strings.HasPrefix(task.Title, "http")) {
+		if info != nil && info.Title != "" {
 			task.Title = info.Title
+			baseName = s.sanitizeFilename(info.Title)
 		}
-
-		// Notify Android media scanner about the new file
-		// This makes downloaded videos appear in the Gallery app
+		task.Progress = 1.0
+		task.Percent = 100
+		s.tasksMutex.Unlock()
 		if task.OutputPath != "" {
 			_ = platform.NotifyMediaScanner(task.OutputPath)
 		}
+		s.notifyUpdate(task)
 	}
+
+	if needTranscript {
+		s.tasksMutex.RLock()
+		cfg := s.configSnapshot()
+		capsDisabled := cfg.DisableCaptions || cfg.VideoOnlySafe
+		s.tasksMutex.RUnlock()
+		if capsDisabled {
+			s.tasksMutex.Lock()
+			task.TranscriptStatus = model.TranscriptStatusUnavailable
+			task.TranscriptError = "captions disabled by feature flag"
+			if mode == model.DownloadModeTranscriptOnly {
+				s.tasksMutex.Unlock()
+				s.finishTaskError(task, task.TranscriptError)
+				return
+			}
+			task.Warning = "Captions skipped (disabled in settings)"
+			s.tasksMutex.Unlock()
+			s.notifyUpdate(task)
+		} else {
+			s.setPhase(task, model.TaskPhaseCaptions)
+			capsCtx, capsCancel := netutil.WithTimeout(ctx, netutil.DefaultCaptionsTimeout)
+			s.fetchAndWriteTranscript(capsCtx, task, baseName)
+			capsCancel()
+		}
+		// transcript-only with no captions is a hard error
+		if mode == model.DownloadModeTranscriptOnly &&
+			task.TranscriptStatus != model.TranscriptStatusCompleted {
+			msg := task.TranscriptError
+			if msg == "" {
+				msg = "No captions available for this video"
+			}
+			s.finishTaskError(task, msg)
+			return
+		}
+	}
+
+	// Final success (possibly partial if transcript failed alongside media)
+	s.tasksMutex.Lock()
+	transitionTaskLocked(task, model.TaskStatusCompleted, model.TaskPhaseDone)
+	task.Progress = 1.0
+	task.Percent = 100
 	task.FinishedAt = time.Now()
+	if needTranscript && task.TranscriptStatus != model.TranscriptStatusCompleted && task.Warning == "" {
+		if task.TranscriptError != "" {
+			task.Warning = "Video downloaded, but transcript failed: " + task.TranscriptError
+		} else if task.TranscriptStatus == model.TranscriptStatusUnavailable {
+			task.Warning = "Video downloaded, but no captions were available"
+		}
+	}
 	s.tasksMutex.Unlock()
-
-	// Stop smoothing timer for this task
-	s.stopSmoothingTimer(task.ID)
-
 	s.notifyUpdate(task)
+}
+
+func (s *Service) setPhase(task *model.DownloadTask, phase model.TaskPhase) {
+	s.tasksMutex.Lock()
+	if _, ok := s.tasks[task.ID]; ok {
+		task.Phase = phase
+	}
+	s.tasksMutex.Unlock()
+	s.notifyUpdate(task)
+}
+
+func (s *Service) formatForPreset() (quality, ext string) {
+	switch s.configSnapshot().QualityPreset {
+	case "medium":
+		// Progressive A/V up to 480p when the selector matches.
+		return "height<=480", "mp4"
+	case "audio":
+		// True audio-only is not supported by the progressive engine yet.
+		// Map to smallest progressive stream and surface honesty via docs/UI.
+		return "worst", "mp4"
+	default:
+		return "best", "mp4"
+	}
+}
+
+func (s *Service) fetchAndWriteTranscript(ctx context.Context, task *model.DownloadTask, baseName string) {
+	s.tasksMutex.Lock()
+	task.TranscriptStatus = model.TranscriptStatusPending
+	langPref := task.TranscriptLang
+	if langPref == "" {
+		langPref = s.configSnapshot().TranscriptLang
+	}
+	s.tasksMutex.Unlock()
+	s.notifyUpdate(task)
+
+	s.tasksMutex.RLock()
+	capsEng := s.captions
+	s.tasksMutex.RUnlock()
+	if capsEng == nil {
+		capsEng = NewYTDLPEngine()
+	}
+	// Resolve title for transcript-only / missing title cases.
+	if info, err := capsEng.GetVideoInfo(ctx, task.URL); err == nil && info != nil && strings.TrimSpace(info.Title) != "" {
+		s.tasksMutex.Lock()
+		task.Title = info.Title
+		s.tasksMutex.Unlock()
+		baseName = s.sanitizeFilename(info.Title)
+		s.notifyUpdate(task)
+	}
+
+	var caps *types.Captions
+	var track types.CaptionTrack
+	err := netutil.Do(ctx, netutil.DefaultRetry(), func(c context.Context) error {
+		var e error
+		caps, track, e = capsEng.DownloadCaptions(c, task.URL, langPref)
+		return e
+	})
+	if err != nil {
+		cls := captions.ClassifyError(err)
+		if msg := netutil.UserMessage(err); netutil.IsTransient(err) && msg != "" {
+			cls.Message = msg
+		}
+		s.tasksMutex.Lock()
+		task.TranscriptStatus = cls.Status
+		task.TranscriptError = cls.Message
+		s.tasksMutex.Unlock()
+		s.notifyUpdate(task)
+		return
+	}
+	if caps == nil || len(caps.Cues) == 0 {
+		s.tasksMutex.Lock()
+		task.TranscriptStatus = model.TranscriptStatusUnavailable
+		task.TranscriptError = "caption track contained no cues"
+		s.tasksMutex.Unlock()
+		s.notifyUpdate(task)
+		return
+	}
+
+	if strings.TrimSpace(baseName) == "" || baseName == "video" {
+		if title := strings.TrimSpace(task.Title); title != "" && !strings.HasPrefix(title, "http") {
+			baseName = s.sanitizeFilename(title)
+		} else {
+			// Best-effort title from player via list tracks path is already used when media ran.
+			baseName = "transcript"
+		}
+	}
+
+	lang := track.LanguageCode
+	if lang == "" {
+		lang = caps.LanguageCode
+	}
+	if lang == "" {
+		lang = "und"
+	}
+	cfg := s.configSnapshot()
+	outDir := cfg.DownloadDir
+	policy := cfg.CollisionPolicy
+	srtPath, txtPath := transcript.BuildPaths(outDir, baseName, lang)
+	srtRes, err := fsutil.ResolveCollision(srtPath, policy)
+	if err != nil {
+		s.tasksMutex.Lock()
+		task.TranscriptStatus = model.TranscriptStatusError
+		task.TranscriptError = "srt path: " + err.Error()
+		s.tasksMutex.Unlock()
+		s.notifyUpdate(task)
+		return
+	}
+	txtRes, err := fsutil.ResolveCollision(txtPath, policy)
+	if err != nil {
+		s.tasksMutex.Lock()
+		task.TranscriptStatus = model.TranscriptStatusError
+		task.TranscriptError = "txt path: " + err.Error()
+		s.tasksMutex.Unlock()
+		s.notifyUpdate(task)
+		return
+	}
+	srtPath, txtPath = srtRes.Path, txtRes.Path
+	s.setPhase(task, model.TaskPhaseWriting)
+	if !srtRes.Skip {
+		if err := transcript.WriteSRT(srtPath, caps.Cues); err != nil {
+			s.tasksMutex.Lock()
+			task.TranscriptStatus = model.TranscriptStatusError
+			task.TranscriptError = "write srt: " + err.Error()
+			s.tasksMutex.Unlock()
+			s.notifyUpdate(task)
+			return
+		}
+	}
+	if !txtRes.Skip {
+		if err := transcript.WriteTXT(txtPath, caps.Cues); err != nil {
+			s.tasksMutex.Lock()
+			task.TranscriptStatus = model.TranscriptStatusError
+			task.TranscriptError = "write txt: " + err.Error()
+			task.TranscriptSRTPath = srtPath
+			s.tasksMutex.Unlock()
+			s.notifyUpdate(task)
+			return
+		}
+	}
+
+	s.tasksMutex.Lock()
+	task.TranscriptStatus = model.TranscriptStatusCompleted
+	task.TranscriptLang = lang
+	task.TranscriptSRTPath = srtPath
+	task.TranscriptTXTPath = txtPath
+	task.TranscriptError = ""
+	if task.Title == "" || strings.HasPrefix(task.Title, "http") {
+		task.Title = baseName
+	}
+	// For transcript-only, expose txt as primary output path for open/reveal defaults.
+	if task.Mode == model.DownloadModeTranscriptOnly && task.OutputPath == "" {
+		task.OutputPath = txtPath
+	}
+	s.tasksMutex.Unlock()
+	s.notifyUpdate(task)
+}
+
+func (s *Service) finishTaskError(task *model.DownloadTask, msg string) {
+	s.tasksMutex.Lock()
+	transitionTaskLocked(task, model.TaskStatusError, model.TaskPhaseDone)
+	task.LastError = msg
+	s.tasksMutex.Unlock()
+	applog.WithTask(task.ID).Error("task error", "err", msg)
+	s.notifyUpdate(task)
+}
+
+// applyStopOrError returns true if task was stopped/paused (caller should return).
+func (s *Service) applyStopOrError(task *model.DownloadTask, ctx context.Context, err error) bool {
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+
+	mode, wasStopped := s.stopModes[task.ID]
+	if wasStopped || ctx.Err() == context.Canceled {
+		if mode == StopModePause || s.stopModes[task.ID] == StopModePause {
+			transitionTaskLocked(task, model.TaskStatusPaused, model.TaskPhaseDone)
+		} else {
+			transitionTaskLocked(task, model.TaskStatusStopped, model.TaskPhaseDone)
+		}
+		delete(s.stopModes, task.ID)
+		s.notifyUpdate(task)
+		return true
+	}
+	_ = err
+	return false
 }
 
 // Replace old progress updater with one that accepts new Progress
@@ -742,23 +1439,197 @@ func (s *Service) startNextPendingTask() {
 	s.tasksMutex.Lock()
 	defer s.tasksMutex.Unlock()
 
-	if s.activeCount >= s.maxParallel {
-		return
-	}
-
-	// Find next pending task
 	for _, task := range s.tasks {
 		if task.Status == model.TaskStatusPending {
-			go s.startTask(task)
-			return
+			s.queueStartLocked(task)
+			if s.activeCount >= s.maxParallel {
+				return
+			}
 		}
 	}
 }
 
-// notifyUpdate calls the update callback if set
+// notifyUpdate publishes a detached snapshot so callbacks cannot mutate worker state.
+// Callers may hold tasksMutex; do not lock here.
 func (s *Service) notifyUpdate(task *model.DownloadTask) {
-	if s.onUpdate != nil {
-		s.onUpdate(task)
+	snapshot := cloneTask(task)
+	if s.onUpdate != nil && snapshot != nil {
+		s.onUpdate(snapshot)
+	}
+	// Signal a single persistence worker; callers may hold tasksMutex.
+	select {
+	case s.persistSignal <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) schedulePersist() {
+	if s.queueStore == nil {
+		return
+	}
+	// Snapshot under lock without holding lock during debounce callback prep.
+	s.tasksMutex.RLock()
+	snap := make([]*model.DownloadTask, 0, len(s.tasks))
+	for _, t := range s.tasks {
+		if t == nil {
+			continue
+		}
+		cp := *t
+		snap = append(snap, &cp)
+	}
+	s.tasksMutex.RUnlock()
+	s.queueStore.ScheduleSave(snap)
+}
+
+// PersistNow flushes the queue snapshot immediately (shutdown/tests).
+func (s *Service) PersistNow() error {
+	if s.queueStore == nil {
+		return nil
+	}
+	s.tasksMutex.RLock()
+	snap := make([]*model.DownloadTask, 0, len(s.tasks))
+	for _, t := range s.tasks {
+		if t == nil {
+			continue
+		}
+		cp := *t
+		snap = append(snap, &cp)
+	}
+	s.tasksMutex.RUnlock()
+	return s.queueStore.Save(snap)
+}
+
+// LoadPersistedQueue reads disk snapshot without importing into the live map.
+func (s *Service) LoadPersistedQueue() ([]*model.DownloadTask, error) {
+	if s.queueStore == nil {
+		return nil, nil
+	}
+	return s.queueStore.Load()
+}
+
+// ImportTasks restores tasks into the live queue. Incomplete tasks stay Paused
+// unless startPending is true (Pending only).
+func (s *Service) ImportTasks(tasks []*model.DownloadTask, startPending bool) int {
+	if len(tasks) == 0 {
+		return 0
+	}
+	n := 0
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+	if s.shuttingDown {
+		return 0
+	}
+	for _, t := range tasks {
+		if t == nil || t.ID == "" || t.URL == "" {
+			continue
+		}
+		if _, exists := s.tasks[t.ID]; exists {
+			continue
+		}
+		if s.findOpenTaskByURLLocked(t.URL) != nil && !t.Status.IsFinished() {
+			continue
+		}
+		cp := *t
+		// Never resume mid-download automatically.
+		if cp.Status.IsActive() {
+			cp.Status = model.TaskStatusPaused
+		}
+		if cp.Phase == "" {
+			cp.Phase = model.TaskPhaseQueued
+		}
+		s.tasks[cp.ID] = &cp
+		n++
+		if startPending && cp.Status == model.TaskStatusPending {
+			s.queueStartLocked(&cp)
+		}
+	}
+	return n
+}
+
+// ClearPersistedQueue deletes the on-disk snapshot.
+func (s *Service) ClearPersistedQueue() error {
+	if s.queueStore == nil {
+		return nil
+	}
+	return s.queueStore.Clear()
+}
+
+// PauseAll requests pause on every active task.
+func (s *Service) PauseAll() int {
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+	n := 0
+	for id, task := range s.tasks {
+		if task.Status == model.TaskStatusDownloading || task.Status == model.TaskStatusStarting {
+			task.Status = model.TaskStatusStopping
+			s.stopModes[id] = StopModePause
+			n++
+			s.notifyUpdate(task)
+		}
+	}
+	return n
+}
+
+// ClearCompleted removes Completed tasks from the queue.
+func (s *Service) ClearCompleted() int {
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+	n := 0
+	for id, task := range s.tasks {
+		if task.Status == model.TaskStatusCompleted {
+			delete(s.tasks, id)
+			delete(s.progressState, id)
+			s.stopSmoothingTimerLocked(id)
+			n++
+		}
+	}
+	return n
+}
+
+// RetryFailed re-queues Error tasks for another attempt.
+func (s *Service) RetryFailed() int {
+	s.tasksMutex.Lock()
+	defer s.tasksMutex.Unlock()
+	n := 0
+	for _, task := range s.tasks {
+		if task.Status != model.TaskStatusError {
+			continue
+		}
+		s.resetTaskForRestartLocked(task)
+		s.queueStartLocked(task)
+		n++
+	}
+	return n
+}
+
+// Shutdown gracefully pauses in-flight work and waits for workers.
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.tasksMutex.Lock()
+	s.shuttingDown = true
+	for id, task := range s.tasks {
+		if task.Status.IsActive() {
+			task.Status = model.TaskStatusStopping
+			s.stopModes[id] = StopModePause
+			s.notifyUpdate(task)
+		}
+	}
+	s.tasksMutex.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		s.workerWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		s.persistStopOnce.Do(func() { close(s.persistStop) })
+		s.persistWG.Wait()
+		return s.PersistNow()
+	case <-ctx.Done():
+		s.persistStopOnce.Do(func() { close(s.persistStop) })
+		s.persistWG.Wait()
+		_ = s.PersistNow()
+		return ctx.Err()
 	}
 }
 
@@ -774,47 +1645,9 @@ func generateTaskID() string {
 	return "task-" + id.String()
 }
 
-// extractVideoID extracts video ID from various YouTube URL formats
-func (s *Service) extractVideoID(url string) string {
-	// Simple extraction for common YouTube URL patterns
-	if strings.Contains(url, "youtube.com/watch?v=") {
-		parts := strings.Split(url, "v=")
-		if len(parts) > 1 {
-			videoID := strings.Split(parts[1], "&")[0]
-			// Clean video ID from any additional parameters
-			videoID = strings.Split(videoID, "#")[0]
-			videoID = strings.Split(videoID, "/")[0]
-			if len(videoID) == 11 { // YouTube video IDs are 11 characters
-				return videoID
-			}
-		}
-	} else if strings.Contains(url, "youtu.be/") {
-		parts := strings.Split(url, "youtu.be/")
-		if len(parts) > 1 {
-			videoID := strings.Split(parts[1], "?")[0]
-			videoID = strings.Split(videoID, "#")[0]
-			if len(videoID) == 11 {
-				return videoID
-			}
-		}
-	}
-
-	// For other URLs, try to extract some identifier
-	if strings.Contains(url, "vimeo.com/") {
-		parts := strings.Split(url, "vimeo.com/")
-		if len(parts) > 1 {
-			videoID := strings.Split(parts[1], "/")[0]
-			videoID = strings.Split(videoID, "?")[0]
-			videoID = strings.Split(videoID, "#")[0]
-			if videoID != "" {
-				return "vimeo_" + videoID
-			}
-		}
-	}
-
-	// Generic fallback - use hash of URL
-	hash := fmt.Sprintf("%x", len(url))
-	return "video_" + hash[:8]
+// extractVideoID delegates URL classification to the shared URL utility.
+func (s *Service) extractVideoID(rawURL string) string {
+	return urlutil.VideoID(rawURL)
 }
 
 // generateUserFriendlyPath generates a user-friendly file path with original title
@@ -854,30 +1687,9 @@ func (s *Service) generateUserFriendlyPath(task *model.DownloadTask) string {
 	return newPath
 }
 
-// sanitizeFilename removes or replaces characters that are not safe for filenames
-//
-//lint:ignore U1000 reserved for future rename feature
+// sanitizeFilename removes or replaces characters that are not safe for filenames.
 func (s *Service) sanitizeFilename(filename string) string {
-	// Replace unsafe characters
-	unsafe := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
-	result := filename
-
-	for _, char := range unsafe {
-		result = strings.ReplaceAll(result, char, "_")
-	}
-
-	// Replace multiple spaces with single space
-	result = strings.Join(strings.Fields(result), " ")
-
-	// Replace spaces with underscores
-	result = strings.ReplaceAll(result, " ", "_")
-
-	// Limit length to avoid filesystem issues
-	if len(result) > 200 {
-		result = result[:200]
-	}
-
-	return result
+	return fsutil.SanitizeFilename(filename)
 }
 
 // parseYouTubeError converts YouTube-specific errors to user-friendly messages
@@ -885,9 +1697,23 @@ func (s *Service) parseYouTubeError(err error) string {
 	if err == nil {
 		return ""
 	}
+	if msg := netutil.UserMessage(err); netutil.IsTransient(err) || msg != err.Error() {
+		// Prefer network-oriented message when classification applied.
+		if netutil.IsTransient(err) {
+			return msg
+		}
+		switch {
+		case strings.Contains(strings.ToLower(msg), "dns"),
+			strings.Contains(strings.ToLower(msg), "tls"),
+			strings.Contains(strings.ToLower(msg), "offline"),
+			strings.Contains(strings.ToLower(msg), "timeout"),
+			strings.Contains(strings.ToLower(msg), "rate limited"),
+			strings.Contains(strings.ToLower(msg), "unavailable"):
+			return msg
+		}
+	}
 
-	errStr := err.Error()
-	errStr = strings.ToLower(errStr)
+	errStr := strings.ToLower(err.Error())
 
 	// Age restriction
 	if strings.Contains(errStr, "age restricted") || strings.Contains(errStr, "age-restricted") {
@@ -914,18 +1740,59 @@ func (s *Service) parseYouTubeError(err error) string {
 		return "Video is blocked due to copyright restrictions"
 	}
 
-	// Network issues
-	if strings.Contains(errStr, "network") || strings.Contains(errStr, "timeout") {
-		return "Network error - please check your connection"
-	}
-
 	// Authentication issues
 	if strings.Contains(errStr, "auth") || strings.Contains(errStr, "login") {
 		return "Authentication required - video may be private"
 	}
 
-	// Return original error if no specific pattern matches
 	return err.Error()
+}
+
+// Playlist state helpers keep mutable playlist objects synchronized independently
+// from the map lock. Playlist workers and cancellation can run concurrently.
+func (s *Service) withPlaylistState(fn func()) {
+	s.playlistStateMutex.Lock()
+	defer s.playlistStateMutex.Unlock()
+	fn()
+}
+
+func (s *Service) playlistState(fn func()) {
+	s.playlistStateMutex.RLock()
+	defer s.playlistStateMutex.RUnlock()
+	fn()
+}
+
+func (s *Service) playlistCancelled(playlist *model.Playlist) bool {
+	cancelled := false
+	s.playlistState(func() { cancelled = playlist.Cancelled })
+	return cancelled
+}
+
+func (s *Service) playlistIsCancelled(playlist *model.Playlist) bool {
+	cancelled := false
+	s.playlistState(func() {
+		cancelled = playlist.Cancelled || playlist.Status == model.PlaylistStatusCancelled
+	})
+	return cancelled
+}
+
+func (s *Service) clonePlaylist(playlist *model.Playlist) *model.Playlist {
+	if playlist == nil {
+		return nil
+	}
+	var snapshot model.Playlist
+	s.playlistState(func() {
+		snapshot = *playlist
+		snapshot.Videos = make([]*model.PlaylistVideo, 0, len(playlist.Videos))
+		for _, video := range playlist.Videos {
+			if video == nil {
+				continue
+			}
+			copy := *video
+			snapshot.Videos = append(snapshot.Videos, &copy)
+		}
+	})
+	return &snapshot
 }
 
 // Playlist methods
@@ -957,9 +1824,12 @@ func (s *Service) AddPlaylist(playlist *model.Playlist) error {
 // GetPlaylist returns a playlist by ID
 func (s *Service) GetPlaylist(id string) (*model.Playlist, bool) {
 	s.playlistsMutex.RLock()
-	defer s.playlistsMutex.RUnlock()
 	playlist, exists := s.playlists[id]
-	return playlist, exists
+	s.playlistsMutex.RUnlock()
+	if !exists {
+		return nil, false
+	}
+	return s.clonePlaylist(playlist), true
 }
 
 // GetAllPlaylists returns all playlists
@@ -969,42 +1839,53 @@ func (s *Service) GetAllPlaylists() []*model.Playlist {
 
 	playlists := make([]*model.Playlist, 0, len(s.playlists))
 	for _, playlist := range s.playlists {
-		playlists = append(playlists, playlist)
+		if snapshot := s.clonePlaylist(playlist); snapshot != nil {
+			playlists = append(playlists, snapshot)
+		}
 	}
 	return playlists
 }
 
 // DownloadPlaylist starts downloading a playlist with chunked approach
 func (s *Service) DownloadPlaylist(playlist *model.Playlist) error {
-	if !playlist.IsReadyForDownload() {
+	ready := false
+	s.playlistState(func() { ready = playlist.IsReadyForDownload() })
+	if !ready {
 		return fmt.Errorf("playlist is not ready for download")
 	}
 
-	// Update playlist status
-	playlist.UpdateStatus(model.PlaylistStatusDownloading)
-
-	// Start processing the playlist
+	s.withPlaylistState(func() { playlist.UpdateStatus(model.PlaylistStatusDownloading) })
 	go s.processPlaylist(playlist)
-
 	return nil
 }
 
-// processPlaylist processes a playlist by downloading videos in chunks
+// processPlaylist processes a playlist by downloading videos in chunks.
+// Each chunk waits until item tasks finish (or are cancelled).
 func (s *Service) processPlaylist(playlist *model.Playlist) {
-	// Get pending videos
-	pendingVideos := playlist.GetPendingVideos()
+	var pendingVideos []*model.PlaylistVideo
+	s.playlistState(func() { pendingVideos = playlist.GetPendingVideos() })
 	if len(pendingVideos) == 0 {
-		playlist.UpdateStatus(model.PlaylistStatusCompleted)
+		status := model.PlaylistStatusCompleted
+		if s.playlistCancelled(playlist) {
+			status = model.PlaylistStatusCancelled
+		}
+		s.withPlaylistState(func() { playlist.UpdateStatus(status) })
 		return
 	}
 
-	// Process videos in chunks
 	chunkSize := s.maxPlaylistParallel
+	if chunkSize < 1 {
+		chunkSize = 1
+	}
 	for i := 0; i < len(pendingVideos); i += chunkSize {
+		if s.playlistIsCancelled(playlist) {
+			s.withPlaylistState(func() { playlist.UpdateStatus(model.PlaylistStatusCancelled) })
+			return
+		}
+
 		end := min(i+chunkSize, len(pendingVideos))
 		chunk := pendingVideos[i:end]
 
-		// Download chunk of videos
 		var wg sync.WaitGroup
 		for _, video := range chunk {
 			wg.Add(1)
@@ -1013,89 +1894,230 @@ func (s *Service) processPlaylist(playlist *model.Playlist) {
 				s.downloadPlaylistVideo(playlist, v)
 			}(video)
 		}
-
-		// Wait for current chunk to complete
 		wg.Wait()
 
-		// Check if playlist was cancelled
-		if playlist.Status == model.PlaylistStatusError {
+		if s.playlistCancelled(playlist) {
+			s.withPlaylistState(func() { playlist.UpdateStatus(model.PlaylistStatusCancelled) })
 			return
 		}
 	}
 
-	// Mark playlist as completed
-	playlist.UpdateStatus(model.PlaylistStatusCompleted)
+	// Refresh aggregate counters for UI.
+	s.withPlaylistState(func() {
+		playlist.Downloaded = len(playlist.GetCompletedVideos())
+	})
+	if s.playlistCancelled(playlist) {
+		s.withPlaylistState(func() { playlist.UpdateStatus(model.PlaylistStatusCancelled) })
+		return
+	}
+	s.withPlaylistState(func() { playlist.UpdateStatus(model.PlaylistStatusCompleted) })
 }
 
-// downloadPlaylistVideo downloads a single video from a playlist
+// downloadPlaylistVideo downloads a single video from a playlist and blocks until done.
 func (s *Service) downloadPlaylistVideo(playlist *model.Playlist, video *model.PlaylistVideo) {
-	// Update video status
-	playlist.UpdateVideoStatus(video.ID, model.VideoStatusDownloading)
-
-	// Create download task for this video
-	task, err := s.AddTask(video.URL)
-	if err != nil {
-		playlist.UpdateVideoStatus(video.ID, model.VideoStatusError)
-		video.Error = err.Error()
+	if s.playlistCancelled(playlist) {
+		s.withPlaylistState(func() { playlist.UpdateVideoStatus(video.ID, model.VideoStatusSkipped) })
 		return
 	}
 
-	// Monitor task progress
-	go func() {
-		for range time.NewTicker(100 * time.Millisecond).C {
-			if task.Status.IsFinished() {
-				if task.Status == model.TaskStatusCompleted {
-					playlist.UpdateVideoOutputPath(video.ID, task.OutputPath, task.FileSize)
-					playlist.UpdateVideoStatus(video.ID, model.VideoStatusCompleted)
-					playlist.UpdateVideoProgress(video.ID, 100.0)
-				} else {
-					playlist.UpdateVideoStatus(video.ID, model.VideoStatusError)
-					video.Error = task.LastError
-				}
-				return
-			}
-			playlist.UpdateVideoProgress(video.ID, task.Progress)
+	s.withPlaylistState(func() { playlist.UpdateVideoStatus(video.ID, model.VideoStatusDownloading) })
+
+	var mode model.DownloadMode
+	var lang string
+	s.playlistState(func() {
+		mode = playlist.Mode
+		lang = playlist.TranscriptLang
+	})
+	if mode == "" {
+		s.tasksMutex.RLock()
+		mode = s.configSnapshot().DefaultMode
+		s.tasksMutex.RUnlock()
+	}
+	if lang == "" {
+		s.tasksMutex.RLock()
+		lang = s.configSnapshot().TranscriptLang
+		s.tasksMutex.RUnlock()
+	}
+
+	// Optional skip-existing: if collision policy is skip and a completed-looking
+	// output already exists, AddTask+engine short-circuit still works; we also
+	// honor explicit playlist.SkipExisting by mapping to skip collision for the
+	// duration of this item when service policy is rename (best-effort).
+	task, err := s.AddTaskWithOptions(TaskOptions{
+		URL:            video.URL,
+		Mode:           mode,
+		TranscriptLang: lang,
+	})
+	if err != nil {
+		// Duplicate open task: try to attach to existing by URL.
+		if existing := s.findTaskByURL(video.URL); existing != nil {
+			task = existing
+		} else {
+			s.withPlaylistState(func() {
+				playlist.UpdateVideoStatus(video.ID, model.VideoStatusError)
+				video.Error = err.Error()
+			})
+			return
 		}
-	}()
+	}
+	s.withPlaylistState(func() { video.TaskID = task.ID })
+
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		if s.playlistCancelled(playlist) {
+			_ = s.StopTask(task.ID)
+			s.withPlaylistState(func() { playlist.UpdateVideoStatus(video.ID, model.VideoStatusSkipped) })
+			return
+		}
+
+		// Refresh task pointer from service map (status mutations are on same ptr).
+		cur, ok := s.GetTask(task.ID)
+		if !ok {
+			// Removed externally.
+			s.withPlaylistState(func() { playlist.UpdateVideoStatus(video.ID, model.VideoStatusSkipped) })
+			return
+		}
+		s.withPlaylistState(func() {
+			video.Speed = cur.Speed
+			video.ETASec = cur.ETASec
+			playlist.UpdateVideoProgress(video.ID, cur.Progress*100)
+		})
+
+		switch cur.Status {
+		case model.TaskStatusCompleted:
+			s.withPlaylistState(func() {
+				playlist.UpdateVideoOutputPath(video.ID, cur.OutputPath, cur.FileSize)
+				playlist.UpdateVideoStatus(video.ID, model.VideoStatusCompleted)
+				playlist.UpdateVideoProgress(video.ID, 100)
+				playlist.Downloaded = len(playlist.GetCompletedVideos())
+			})
+			return
+		case model.TaskStatusError:
+			s.withPlaylistState(func() {
+				playlist.UpdateVideoStatus(video.ID, model.VideoStatusError)
+				video.Error = cur.LastError
+			})
+			return
+		case model.TaskStatusStopped:
+			s.withPlaylistState(func() { playlist.UpdateVideoStatus(video.ID, model.VideoStatusSkipped) })
+			return
+		case model.TaskStatusPaused:
+			s.withPlaylistState(func() { playlist.UpdateVideoStatus(video.ID, model.VideoStatusPaused) })
+			// Keep waiting — user may resume the task.
+		}
+	}
 }
 
-// CancelPlaylist cancels a playlist download
-func (s *Service) CancelPlaylist(playlistID string) error {
-	s.playlistsMutex.Lock()
-	defer s.playlistsMutex.Unlock()
-
-	playlist, exists := s.playlists[playlistID]
-	if !exists {
-		return fmt.Errorf("playlist not found: %s", playlistID)
-	}
-
-	// Update status
-	playlist.UpdateStatus(model.PlaylistStatusError)
-
-	// Cancel all downloading videos
-	for _, video := range playlist.Videos {
-		if video.Status == model.VideoStatusDownloading {
-			playlist.UpdateVideoStatus(video.ID, model.VideoStatusSkipped)
+func (s *Service) findTaskByURL(url string) *model.DownloadTask {
+	s.tasksMutex.RLock()
+	defer s.tasksMutex.RUnlock()
+	for _, t := range s.tasks {
+		if t.URL == url {
+			return t
 		}
 	}
-
 	return nil
 }
 
-// SetMaxPlaylistParallel sets the maximum number of concurrent playlist downloads
+// CancelPlaylist cancels a playlist download and stops in-flight item tasks.
+func (s *Service) CancelPlaylist(playlistID string) error {
+	s.playlistsMutex.Lock()
+	playlist, exists := s.playlists[playlistID]
+	if !exists {
+		s.playlistsMutex.Unlock()
+		return fmt.Errorf("playlist not found: %s", playlistID)
+	}
+	s.withPlaylistState(func() {
+		playlist.Cancelled = true
+		playlist.UpdateStatus(model.PlaylistStatusCancelled)
+	})
+	// Snapshot task ids under playlist state lock, then unlock before StopTask
+	// (StopTask needs tasksMutex).
+	var taskIDs []string
+	s.withPlaylistState(func() {
+		for _, video := range playlist.Videos {
+			if video.Status == model.VideoStatusDownloading || video.Status == model.VideoStatusPending || video.Status == model.VideoStatusPaused {
+				if video.TaskID != "" {
+					taskIDs = append(taskIDs, video.TaskID)
+				}
+				if video.Status != model.VideoStatusCompleted {
+					playlist.UpdateVideoStatus(video.ID, model.VideoStatusSkipped)
+				}
+			}
+		}
+	})
+	s.playlistsMutex.Unlock()
+
+	for _, id := range taskIDs {
+		_ = s.StopTask(id)
+	}
+	// Also stop any open tasks matching remaining video URLs (TaskID not set yet).
+	s.playlistsMutex.RLock()
+	pl, ok := s.playlists[playlistID]
+	s.playlistsMutex.RUnlock()
+	if ok {
+		var urls []string
+		s.playlistState(func() {
+			for _, video := range pl.Videos {
+				if video.TaskID == "" {
+					urls = append(urls, video.URL)
+				}
+			}
+		})
+		for _, url := range urls {
+			if t := s.findTaskByURL(url); t != nil && !t.Status.IsFinished() {
+				_ = s.StopTask(t.ID)
+			}
+		}
+	}
+	return nil
+}
+
+// RetryFailedPlaylistItems re-queues errored (and optionally skipped) items.
+func (s *Service) RetryFailedPlaylistItems(playlistID string) error {
+	s.playlistsMutex.Lock()
+	playlist, exists := s.playlists[playlistID]
+	if !exists {
+		s.playlistsMutex.Unlock()
+		return fmt.Errorf("playlist not found: %s", playlistID)
+	}
+	s.withPlaylistState(func() {
+		playlist.Cancelled = false
+		for _, video := range playlist.Videos {
+			if video.Status == model.VideoStatusError || video.Status == model.VideoStatusSkipped {
+				video.Status = model.VideoStatusPending
+				video.Error = ""
+				video.Progress = 0
+				video.TaskID = ""
+				video.UpdatedAt = time.Now()
+			}
+		}
+		playlist.UpdateStatus(model.PlaylistStatusDownloading)
+	})
+	s.playlistsMutex.Unlock()
+
+	go s.processPlaylist(playlist)
+	return nil
+}
+
+// SetMaxPlaylistParallel sets the maximum number of concurrent playlist downloads.
 func (s *Service) SetMaxPlaylistParallel(max int) {
+	if max < 1 {
+		max = 1
+	}
 	s.maxPlaylistParallel = max
 }
 
-// SetQualityPreset sets quality preset for downloads
+// SetQualityPreset sets quality preset for downloads.
 func (s *Service) SetQualityPreset(preset string) {
 	preset = strings.ToLower(strings.TrimSpace(preset))
-	switch preset {
-	case "best", "medium", "audio":
-		s.qualityPreset = preset
-	default:
-		s.qualityPreset = "best"
+	if preset != "best" && preset != "medium" && preset != "audio" {
+		preset = "best"
 	}
+	s.configMutex.Lock()
+	s.config.QualityPreset = preset
+	s.configMutex.Unlock()
 }
 
 // SetMaxParallelDownloads sets the maximum number of parallel downloads
@@ -1113,10 +2135,34 @@ func (s *Service) SetMaxParallelDownloads(max int) {
 	s.maxParallel = max
 }
 
-// SetDownloadDirectory sets the download directory
+// SetDownloadDirectory sets the download directory.
 func (s *Service) SetDownloadDirectory(dir string) {
-	s.tasksMutex.Lock()
-	defer s.tasksMutex.Unlock()
+	s.configMutex.Lock()
+	s.config.DownloadDir = dir
+	s.configMutex.Unlock()
+}
 
-	s.downloadDir = dir
+// SetCollisionPolicy sets skip|overwrite|rename behavior for existing outputs.
+func (s *Service) SetCollisionPolicy(policy fsutil.CollisionPolicy) {
+	s.configMutex.Lock()
+	s.config.CollisionPolicy = fsutil.NormalizeCollisionPolicy(policy)
+	s.configMutex.Unlock()
+}
+
+// SetDefaultMode sets the default download mode for new tasks.
+func (s *Service) SetDefaultMode(mode model.DownloadMode) {
+	s.configMutex.Lock()
+	s.config.DefaultMode = normalizeMode(mode)
+	s.configMutex.Unlock()
+}
+
+// SetTranscriptLanguage sets preferred caption language ("" or "auto" = automatic).
+func (s *Service) SetTranscriptLanguage(lang string) {
+	lang = strings.TrimSpace(strings.ToLower(lang))
+	if lang == "auto" || lang == "system" {
+		lang = ""
+	}
+	s.configMutex.Lock()
+	s.config.TranscriptLang = lang
+	s.configMutex.Unlock()
 }

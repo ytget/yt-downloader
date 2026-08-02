@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # Strip leading v from tag for app metadata / ldflags.
+  RELEASE_VERSION: ${{ github.ref_name }}
+
 jobs:
   build-ubuntu:
     runs-on: ubuntu-latest
@@ -21,56 +25,113 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker images
-        uses: actions/cache@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          path: /tmp/.docker-cache
-          key: ${{ runner.os }}-docker-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-docker-
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Load cached Docker images
+      - name: Install Linux webview dependencies
         run: |
-          if [ -d "/tmp/.docker-cache" ]; then
-            echo "Loading cached Docker images..."
-            for img in /tmp/.docker-cache/*.tar; do
-              if [ -f "$img" ]; then
-                docker load -i "$img" || true
-              fi
-            done
-          fi
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
 
       - name: Install tools
-        run: |
-          go install fyne.io/tools/cmd/fyne@latest
-          go install github.com/fyne-io/fyne-cross@latest
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-      - name: Build (Linux/Windows/Android)
-        run: |
-          export VERSION="${GITHUB_REF_NAME#v}"
-          make build-linux-amd64
-          make build-windows-amd64
-          make build-android
+      - name: Install dependencies
+        run: make deps
 
-      - name: Save Docker images to cache
+      - name: Build Linux
         run: |
-          mkdir -p /tmp/.docker-cache
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep "fyneio/fyne-cross" | while read img; do
-            filename=$(echo "$img" | tr '/:' '_')
-            if [ ! -f "/tmp/.docker-cache/${filename}.tar" ]; then
-              echo "Saving $img to cache..."
-              docker save -o "/tmp/.docker-cache/${filename}.tar" "$img" || true
-            fi
-          done
+          VERSION="${GITHUB_REF_NAME#v}"
+          make build-linux VERSION="$VERSION"
 
-      - name: Upload artifacts (ubuntu)
+      - name: Name Linux artifact
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p build/release
+          if [[ -f build/bin/yt-downloader ]]; then
+            cp build/bin/yt-downloader "build/release/yt-downloader_${VERSION}_linux_amd64"
+          fi
+          # Keep original path layout too
+          cp -a build/bin/. build/release/ 2>/dev/null || true
+
+      - name: Upload artifacts (linux)
         uses: actions/upload-artifact@v4
         with:
-          name: artifacts-ubuntu
-          path: fyne-cross/dist/**
+          name: artifacts-linux
+          path: build/release/**
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install tools
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install dependencies
+        shell: bash
+        run: make deps
+
+      - name: Build Windows
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          make build-windows VERSION="$VERSION"
+
+      - name: Import certificate and sign (optional)
+        if: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 != '' }}
+        shell: bash
+        env:
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          PFX_PATH="$RUNNER_TEMP/windows-cert.pfx"
+          echo "$WINDOWS_CERTIFICATE_PFX_BASE64" | base64 --decode > "$PFX_PATH"
+          export WINDOWS_CERTIFICATE_PFX_PATH="$PFX_PATH"
+          # Ensure signtool is discoverable on windows-latest
+          "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22621.0/x64/signtool.exe" 2>/dev/null || true
+          mapfile -t SIGNTOOLS < <(find "/c/Program Files (x86)/Windows Kits/10/bin" -name signtool.exe 2>/dev/null | sort -r)
+          if [[ ${#SIGNTOOLS[@]} -gt 0 ]]; then
+            export PATH="$(dirname "${SIGNTOOLS[0]}"):$PATH"
+          fi
+          bash scripts/sign_windows.sh
+
+      - name: Name Windows artifact
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p build/release
+          if [[ -f build/bin/yt-downloader.exe ]]; then
+            cp build/bin/yt-downloader.exe "build/release/yt-downloader_${VERSION}_windows_amd64.exe"
+          fi
+          cp -a build/bin/. build/release/ 2>/dev/null || true
+
+      - name: Upload artifacts (windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-windows
+          path: build/release/**
           if-no-files-found: error
 
   build-darwin:
@@ -86,82 +147,84 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Install Xcode command line tools
-        run: |
-          xcode-select --install || true
-          sudo xcode-select --switch /Library/Developer/CommandLineTools || true
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install tools
-        run: |
-          go install fyne.io/tools/cmd/fyne@latest
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-      - name: Build (macOS)
+      - name: Install dependencies
+        run: make deps
+
+      - name: Build macOS
         run: |
-          export VERSION="${GITHUB_REF_NAME#v}"
-          make package-darwin-native
+          VERSION="${GITHUB_REF_NAME#v}"
+          make build-mac-arm64 VERSION="$VERSION"
+          make build-mac-amd64 VERSION="$VERSION"
+
+      - name: Import certificate and sign/notarize (optional)
+        if: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 != '' }}
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          if [[ -n "${APPLE_API_KEY_P8_BASE64:-}" ]]; then
+            export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+            echo "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$APPLE_API_KEY_PATH"
+          fi
+          bash scripts/sign_macos.sh
+
+      - name: Package Homebrew-friendly zip
+        run: bash scripts/package_macos_release.sh
 
       - name: Upload artifacts (darwin)
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-darwin
-          path: dist/**
+          path: |
+            build/bin/**/*.app
+            build/bin/**/*.app.zip
+            build/bin/*.app
+            build/bin/*.app.zip
+            build/bin/**
           if-no-files-found: error
 
-  publish:
+  release:
+    needs: [build-ubuntu, build-windows, build-darwin]
     runs-on: ubuntu-latest
-    needs: [build-ubuntu, build-darwin]
     steps:
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: ./artifacts
-
-      - name: Prepare release files (rename and flatten)
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p release
-
-          # Collect and rename artifacts to a consistent scheme
-          find artifacts -type f \( -name "*.tar.xz" -o -name "*.zip" -o -name "*.apk" \) | while read -r f; do
-            base="$(basename "$f")"
-            ext="${base##*.}"
-            label="unknown"
-
-            case "$f" in
-              *linux*amd64*|*linux-amd64*|*linux/amd64*) label="linux_amd64" ;;
-              *linux*arm64*|*linux-arm64*|*linux/arm64*) label="linux_arm64" ;;
-              *windows*amd64*|*windows-amd64*|*windows/amd64*) label="windows_amd64" ;;
-              *windows*386*|*windows-386*|*windows/386*) label="windows_386" ;;
-              *android*arm64*|*android-arm64*) label="android_arm64" ;;
-              *android*arm*|*android-arm*) label="android_arm" ;;
-              *android*amd64*|*android-amd64*) label="android_amd64" ;;
-              *android*386*|*android-386*|*android/386*) label="android_386" ;;
-              *.app.zip|*darwin*|*macos*|*darwin-local*) label="darwin" ;;
-            esac
-
-            out="yt-downloader_v${VERSION}_${label}.${ext}"
-            cp "$f" "release/$out"
-            echo "Prepared: release/$out"
-          done
-
-          echo "Generating checksums..."
-          (cd release && shasum -a 256 * > SHA256SUMS.txt)
-
-      - name: Generate checksums
-        run: |
-          echo "(migrated) checksums already generated in ./release/SHA256SUMS.txt"
+          path: dist
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          files: |
-            release/**
+          files: dist/**/*
+          generate_release_notes: true
+          # Prefer VERSION file alignment reminder in notes is optional;
+          # tag name remains the release identity.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-

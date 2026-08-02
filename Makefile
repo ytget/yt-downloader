@@ -1,478 +1,142 @@
-SHELL:=bash
+APP_NAME    := yt-downloader
+BIN_DIR     := build/bin
+
+# Single version source: VERSION file, overridable by env (CI/release tags).
+VERSION_FILE := VERSION
+VERSION      ?= $(shell tr -d ' \n' < $(VERSION_FILE) 2>/dev/null || echo "dev")
+BUILD_DATE   := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS      := -s -w -X main.version=$(VERSION)
+
+# Wails native builds need CGO for platform webview/toolchain dependencies.
+export CGO_ENABLED := 1
 
 .DEFAULT_GOAL := help
 
-# App metadata
-APP_ID ?= com.github.ytget.ytdownloader
-BINARY_NAME ?= yt-downloader
-APP_DISPLAY_NAME ?= YTDownloader
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' | sed 's/-.*//' || echo "0.1.0")
-ICON ?= Icon.png
-OUTPUT_DIR ?= dist
+.PHONY: help dev run generate deps tidy \
+	version sync-version check-ytdlp-pin \
+	build build-linux build-windows build-mac build-mac-amd64 build-mac-arm64 build-all \
+	sign-mac sign-windows \
+	test test-verbose test-cover race fmt lint vet govulncheck npm-audit security check \
+	frontend-install frontend-build frontend-typecheck \
+	clean clean-all debug
 
-# Install locations
-GOBIN_PATH := $(shell go env GOBIN)
-GOPATH_PATH := $(shell go env GOPATH)
-BIN_DIR := $(if $(GOBIN_PATH),$(GOBIN_PATH),$(GOPATH_PATH)/bin)
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: help
-help: ## Available commands
-	@echo "Available commands:"
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[0;33m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
-	@echo ""
+version: ## Print resolved build version
+	@echo $(VERSION)
 
-##@ Development
+sync-version: ## Write VERSION into wails.json productVersion
+	@test -f "$(VERSION_FILE)" || { echo "missing $(VERSION_FILE)"; exit 1; }
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 required for sync-version"; exit 1; }
+	@VERSION="$(VERSION)" python3 scripts/sync_version.py
 
-.PHONY: run
-run: check-deps ## Run application
-	go run main.go
+check-ytdlp-pin: ## Reject non-reproducible local ytdlp replacements
+	@if grep -qE 'replace[[:space:]]+github.com/ytget/ytdlp/v2[[:space:]]*=>[[:space:]]*\.\./\.\./ytdlp-src' go.mod; then \
+		echo "error: go.mod uses a local ytdlp replacement" >&2; exit 1; \
+	fi
 
-.PHONY: debug
-debug: check-deps ## Run app and tee logs to debug.log
-	@echo "Running with logs -> debug.log"
-	@set -o pipefail; go run main.go 2>&1 | tee debug.log
+dev: ## Run Wails development mode
+	wails dev
 
-.PHONY: check-deps
-check-deps: ## Check that all required dependencies are available
-	@echo "Checking dependencies..."
-	@command -v go >/dev/null 2>&1 || { echo "Error: Go is not installed or not in PATH"; exit 1; }
-	@echo "Dependencies OK"
+run: dev ## Alias for dev
 
-.PHONY: test
-test: ## Run tests
-	go test -v ./...
+debug: ## Run Wails dev and tee logs
+	@set -o pipefail; wails dev 2>&1 | tee debug.log
 
-.PHONY: lint
-lint: ## Run linter (golangci-lint)
-	golangci-lint run ./...
+generate: ## Regenerate Wails TypeScript bindings
+	wails generate module
 
-.PHONY: format
-format: ## Format code
-	go install golang.org/x/tools/cmd/goimports@latest
-	goimports -l -w .
-
-##@ Dependencies
-
-.PHONY: deps
-deps: ## Download dependencies
+deps: ## Install Go and frontend dependencies
 	go mod download
 	go mod tidy
+	cd frontend && npm install
 
-.PHONY: deps-update
-deps-update: ## Update dependencies
-	go get -u ./...
+tidy: ## Tidy Go modules
 	go mod tidy
 
-##@ Build
+frontend-install: ## Install frontend dependencies
+	cd frontend && npm install
 
-.PHONY: build
-build: ## Build binary with version information
-	go build -ldflags "-X main.version=$(VERSION)" -o bin/yt-downloader main.go
+frontend-typecheck: ## TypeScript check (no emit)
+	cd frontend && npx tsc --noEmit
 
-.PHONY: install
-install: ## Install binary to $$GOBIN or $$GOPATH/bin
-	@echo "Installing to $(BIN_DIR)"
-	@mkdir -p "$(BIN_DIR)"
-	go build -ldflags "-X main.version=$(VERSION)" -o "$(BIN_DIR)/$(BINARY_NAME)" main.go
-	@echo "Installed: $(BIN_DIR)/$(BINARY_NAME) (v$(VERSION))"
+frontend-build: ## Build frontend only
+	cd frontend && npm run build
 
-.PHONY: clean
-clean: ## Clean build artifacts
-	rm -rf bin/ $(OUTPUT_DIR)/ fyne-cross/
+build: sync-version ## Build native app for current platform
+	@echo "Building $(APP_NAME) $(VERSION)..."
+	wails build -ldflags "$(LDFLAGS)"
 
-##@ Cross-platform Build
+build-linux: sync-version ## Build Linux amd64 binary
+	@echo "Building Linux amd64 $(VERSION)..."
+	wails build -platform linux/amd64 -ldflags "$(LDFLAGS)"
 
-.PHONY: build-macos
-build-macos: ## Cross-build macOS (amd64, arm64)
-	@go install github.com/fyne-io/fyne-cross@latest
-	@fyne-cross darwin \
-	  --arch=amd64,arm64 \
-	  --name $(BINARY_NAME) \
-	  --icon $(ICON) \
-	  --output $(OUTPUT_DIR) \
-	  --ldflags '-X=main.version=$(VERSION)'
+build-windows: sync-version ## Build Windows amd64 binary
+	@echo "Building Windows amd64 $(VERSION)..."
+	wails build -platform windows/amd64 -ldflags "$(LDFLAGS)"
 
-.PHONY: package-darwin
-package-darwin: ## Package macOS app bundles
-	@echo "Packaging macOS app bundles..."
-	@make build-macos
-	@# Create zip archives for each architecture
-	@if [ -d "fyne-cross/dist/darwin-amd64" ]; then \
-		cd fyne-cross/dist/darwin-amd64 && zip -r ../../$(BINARY_NAME)-amd64.app.zip $(BINARY_NAME).app; \
-	fi
-	@if [ -d "fyne-cross/dist/darwin-arm64" ]; then \
-		cd fyne-cross/dist/darwin-arm64 && zip -r ../../$(BINARY_NAME)-arm64.app.zip $(BINARY_NAME).app; \
-	fi
-	@echo "macOS packages created!"
+build-mac: sync-version ## Build macOS universal binary
+	@echo "Building macOS universal $(VERSION)..."
+	wails build -platform darwin/universal -ldflags "$(LDFLAGS)"
 
-.PHONY: package-darwin-native
-package-darwin-native: ## Package macOS app bundle (native build, no Docker)
-	@echo "Building native macOS app bundle..."
-	@mkdir -p dist
-	@fyne package \
-		--name "$(BINARY_NAME)" \
-		--icon "$(ICON)" \
-		--release \
-		--os darwin \
-		--app-version "$(VERSION)" \
-		--app-build 1
-	@# Move to dist directory and create zip
-	@if [ -d "$(BINARY_NAME).app" ]; then \
-		zip -r "dist/$(BINARY_NAME).app.zip" "$(BINARY_NAME).app"; \
-		rm -rf "$(BINARY_NAME).app"; \
-	fi
-	@echo "Native macOS package created: dist/$(BINARY_NAME).app.zip"
+build-mac-amd64: sync-version ## Build macOS amd64 binary
+	@echo "Building macOS amd64 $(VERSION)..."
+	wails build -platform darwin/amd64 -ldflags "$(LDFLAGS)"
 
-.PHONY: collect-artifacts
-collect-artifacts: ## Collect all build artifacts to dist/ folder
-	@echo "Collecting build artifacts..."
-	@mkdir -p dist
-	@# Copy all built files to dist/
-	@find fyne-cross/dist -name "*.tar.xz" -o -name "*.zip" -o -name "*.apk" -o -name "*.app.zip" | while read -r file; do \
-		cp "$$file" dist/; \
-	done
-	@echo "Artifacts collected to dist/"
+build-mac-arm64: sync-version ## Build macOS arm64 binary
+	@echo "Building macOS arm64 $(VERSION)..."
+	wails build -platform darwin/arm64 -ldflags "$(LDFLAGS)"
 
-.PHONY: build-linux
-build-linux: ## Cross-build Linux (amd64, arm64)
-	@go install github.com/fyne-io/fyne-cross@latest
-	@fyne-cross linux \
-	  --arch=amd64,arm64 \
-	  --name $(BINARY_NAME) \
-	  --icon $(ICON) \
-	  --output $(OUTPUT_DIR) \
-	  --ldflags '-X=main.version=$(VERSION)'
+build-all: build-linux build-windows build-mac ## Build all release targets
 
-.PHONY: build-windows
-build-windows: ## Cross-build Windows (amd64)
-	@go install github.com/fyne-io/fyne-cross@latest
-	@fyne-cross windows \
-	  --arch=amd64 \
-	  --name $(BINARY_NAME) \
-	  --icon $(ICON) \
-	  --output $(OUTPUT_DIR) \
-	  --ldflags '-X=main.version=$(VERSION)'
+sign-mac: ## codesign/notarize .app in build/bin (needs Apple identity/creds)
+	bash scripts/sign_macos.sh
 
-.PHONY: build-linux-amd64
-build-linux-amd64: ## Cross-build Linux (amd64 only)
-	@go install github.com/fyne-io/fyne-cross@latest
-	@fyne-cross linux \
-	  --arch=amd64 \
-	  --name $(BINARY_NAME) \
-	  --icon $(ICON) \
-	  --output $(OUTPUT_DIR) \
-	  --ldflags '-X=main.version=$(VERSION)'
+sign-windows: ## signtool sign .exe in build/bin (needs WINDOWS_CERTIFICATE_PFX_PATH)
+	bash scripts/sign_windows.sh
 
-.PHONY: build-windows-amd64
-build-windows-amd64: ## Cross-build Windows (amd64 only)
-	@go install github.com/fyne-io/fyne-cross@latest
-	@fyne-cross windows \
-	  --arch=amd64 \
-	  --name $(BINARY_NAME) \
-	  --icon $(ICON) \
-	  --output $(OUTPUT_DIR) \
-	  --ldflags '-X=main.version=$(VERSION)'
+test: ## Run Go tests
+	go test ./... -count=1
 
-.PHONY: build-android
-build-android: ## Cross-build Android (arm64, arm)
-	@go install github.com/fyne-io/fyne-cross@latest
-	@fyne-cross android \
-	  --arch=arm64,arm \
-	  --name $(APP_DISPLAY_NAME) \
-	  --icon $(ICON) \
-	  --app-id $(APP_ID) \
-	  --output $(OUTPUT_DIR) \
-	  --metadata "appName=$(APP_DISPLAY_NAME)" \
-	  --ldflags '-X=main.version=$(VERSION)'
+test-verbose: ## Run Go tests with verbose output
+	go test ./... -v -count=1
 
-##@ Android Device (USB)
+test-cover: ## Run Go tests with coverage report
+	go test ./... -count=1 -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
 
-# Android Installation Guide:
-# - First time: make android-device-install
-# - Update existing: make android-device-install  
-# - Clean reinstall: make android-device-reinstall
-# - View logs: make android-device-logs
+race: ## Run Go tests with the race detector
+	go test -race ./...
 
-.PHONY: android-device-build
-android-device-build: ## Build APK for Android device
-	@echo "Building APK for Android device..."
-	@make build-android
+fmt: ## Format Go code
+	gofmt -s -w .
 
-.PHONY: android-device-install
-android-device-install: android-device-build ## Install APK on connected Android device
-	@echo "Installing APK on Android device..."
-	@echo "Note: This command installs/updates the app (keeps existing data)."
-	@echo "For clean installation, use 'make android-device-reinstall' instead."
-	@if ! command -v adb >/dev/null 2>&1; then \
-		echo "Error: ADB not found. Install Android SDK or platform-tools."; \
-		echo "Install: brew install android-platform-tools"; \
-		exit 1; \
-	fi
-	@if ! adb devices | grep -q "device$$"; then \
-		echo "Error: No Android device connected or authorized."; \
-		echo "Make sure USB debugging is enabled and device is connected."; \
-		echo "Enable: Settings > Developer Options > USB Debugging"; \
-		exit 1; \
-	fi
-	@apk_path="fyne-cross/dist/android-arm64/dist.apk"; \
-	if [ -f "$$apk_path" ]; then \
-		echo "Installing $$apk_path..."; \
-		adb install -r "$$apk_path"; \
-		echo "Installation completed!"; \
-	else \
-		echo "Error: APK not found. Run 'make android-device-build' first."; \
-		exit 1; \
-	fi
+lint: vet ## Alias for vet
 
-.PHONY: android-device-reinstall
-android-device-reinstall: android-device-build ## Reinstall APK on Android device (uninstall + install)
-	@echo "Reinstalling APK on Android device..."
-	@echo "Note: This command will uninstall existing app and install fresh version."
-	@echo "For first-time installation, use 'make android-device-install' instead."
-	@if ! command -v adb >/dev/null 2>&1; then \
-		echo "Error: ADB not found. Install Android SDK or platform-tools."; \
-		echo "Install: brew install android-platform-tools"; \
-		exit 1; \
-	fi
-	@if ! adb devices | grep -q "device$$"; then \
-		echo "Error: No Android device connected or authorized."; \
-		echo "Make sure USB debugging is enabled and device is connected."; \
-		echo "Enable: Settings > Developer Options > USB Debugging"; \
-		exit 1; \
-	fi
-	@echo "Uninstalling current app..."; \
-	adb uninstall $(APP_ID) 2>/dev/null || echo "App not installed or already removed"; \
-	@apk_path="fyne-cross/dist/android-arm64/dist.apk"; \
-	if [ -f "$$apk_path" ]; then \
-		echo "Installing $$apk_path..."; \
-		adb install "$$apk_path"; \
-		echo "Reinstallation completed!"; \
-	else \
-		echo "Error: APK not found. Run 'make android-device-build' first."; \
-		exit 1; \
-	fi
+vet: ## Run go vet
+	go vet ./...
 
-.PHONY: android-device-logs
-android-device-logs: ## View logs from Android device
-	@echo "Viewing logs from Android device..."
-	@echo "Press Ctrl+C to stop monitoring"
-	@if ! command -v adb >/dev/null 2>&1; then \
-		echo "Error: ADB not found. Install Android SDK or platform-tools."; \
-		exit 1; \
-	fi
-	@if ! adb devices | grep -q "device$$"; then \
-		echo "Error: No Android device connected or authorized."; \
-		echo "Make sure USB debugging is enabled and device is connected."; \
-		exit 1; \
-	fi
-	@adb logcat | grep -E "(com.github.ytget.ytdownloader|ytdlp|Download|Error|Exception|Fatal)"
+govulncheck: ## Run govulncheck on module packages
+	# Pin toolchain to the module Go version so govulncheck can load packages.
+	GOTOOLCHAIN=go1.26.5 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-##@ macOS Installation
+npm-audit: ## npm audit fails on high+ findings
+	cd frontend && npm audit --audit-level=high
 
-# macOS Installation Guide:
-# - Build app: make macos-build
-# - Install app: make macos-install
-# - Create DMG: make macos-dmg
-# - Uninstall app: make macos-uninstall
+security: govulncheck npm-audit ## Dependency vulnerability scans
 
-.PHONY: macos-build
-macos-build: ## Build macOS app bundle (.app)
-	@echo "Building macOS app bundle..."
-	@make build-macos
-	@echo "macOS app built successfully!"
+check: fmt vet test frontend-typecheck ## Format, vet, test backend + frontend typecheck
 
-.PHONY: macos-install
-macos-install: macos-build ## Install macOS app to Applications folder
-	@echo "Installing macOS app to Applications folder..."
-	@if [ ! -d "fyne-cross/dist/darwin-arm64" ] && [ ! -d "fyne-cross/dist/darwin-amd64" ]; then \
-		echo "Error: No macOS build found. Run 'make macos-build' first."; \
-		exit 1; \
-	fi
-	@# Detect architecture and install appropriate app
-	@if [ -d "fyne-cross/dist/darwin-arm64" ]; then \
-		app_path="fyne-cross/dist/darwin-arm64/$(BINARY_NAME).app"; \
-		echo "Installing ARM64 version: $$app_path"; \
-	elif [ -d "fyne-cross/dist/darwin-amd64" ]; then \
-		app_path="fyne-cross/dist/darwin-amd64/$(BINARY_NAME).app"; \
-		echo "Installing AMD64 version: $$app_path"; \
-	fi
-	@if [ -d "$$app_path" ]; then \
-		echo "Copying app to /Applications/..."; \
-		sudo cp -R "$$app_path" "/Applications/"; \
-		echo "App installed successfully!"; \
-		echo "You can find it in Applications folder or Launchpad."; \
-	else \
-		echo "Error: App bundle not found at $$app_path"; \
-		exit 1; \
-	fi
+clean: ## Remove generated build artifacts
+	rm -rf "$(BIN_DIR)"/*
+	rm -rf frontend/dist
+	rm -f coverage.out coverage.html debug.log
+	@echo "Cleaned"
 
-.PHONY: macos-uninstall
-macos-uninstall: ## Uninstall macOS app from Applications folder
-	@echo "Uninstalling macOS app from Applications folder..."
-	@if [ -d "/Applications/$(BINARY_NAME).app" ]; then \
-		echo "Removing /Applications/$(BINARY_NAME).app..."; \
-		sudo rm -rf "/Applications/$(BINARY_NAME).app"; \
-		echo "App uninstalled successfully!"; \
-	else \
-		echo "App not found in Applications folder."; \
-	fi
-
-.PHONY: macos-dmg
-macos-dmg: macos-build ## Create DMG installer for macOS
-	@echo "Creating DMG installer..."
-	@if [ ! -d "fyne-cross/dist/darwin-arm64" ] && [ ! -d "fyne-cross/dist/darwin-amd64" ]; then \
-		echo "Error: No macOS build found. Run 'make macos-build' first."; \
-		exit 1; \
-	fi
-	@# Detect architecture and create DMG
-	@if [ -d "fyne-cross/dist/darwin-arm64" ]; then \
-		app_path="fyne-cross/dist/darwin-arm64/$(BINARY_NAME).app"; \
-		dmg_name="$(BINARY_NAME)-$(VERSION)-arm64.dmg"; \
-	elif [ -d "fyne-cross/dist/darwin-amd64" ]; then \
-		app_path="fyne-cross/dist/darwin-amd64/$(BINARY_NAME).app"; \
-		dmg_name="$(BINARY_NAME)-$(VERSION)-amd64.dmg"; \
-	fi
-	@if [ -d "$$app_path" ]; then \
-		echo "Creating DMG: $$dmg_name"; \
-		hdiutil create -volname "$(BINARY_NAME)" -srcfolder "$$app_path" -ov -format UDZO "$$dmg_name"; \
-		echo "DMG created: $$dmg_name"; \
-	else \
-		echo "Error: App bundle not found at $$app_path"; \
-		exit 1; \
-	fi
-
-.PHONY: macos-clean
-macos-clean: ## Clean macOS build artifacts and DMG files
-	@echo "Cleaning macOS artifacts..."
-	@rm -f *.dmg
-	@rm -rf fyne-cross/dist/darwin-*
-	@echo "macOS artifacts cleaned!"
-
-##@ Android Emulator
-
-.PHONY: android-emulator-build
-android-emulator-build: ## Build APK for Android emulator
-	@echo "Building APK for Android emulator..."
-	@make build-android
-
-.PHONY: android-emulator-start
-android-emulator-start: ## Start Android emulator (pixel34arm)
-	@echo "Starting Android emulator..."
-	@emulator -avd pixel34arm -no-snapshot-load &
-	@echo "Emulator starting in background..."
-	@echo "Use 'make android-emulator-wait' to wait for it to be ready"
-
-.PHONY: android-emulator-wait
-android-emulator-wait: ## Wait for emulator to be ready
-	@echo "Waiting for emulator to be ready..."
-	@adb wait-for-device
-	@echo "Emulator is ready!"
-
-.PHONY: android-emulator-install
-android-emulator-install: android-emulator-build ## Install APK on Android emulator
-	@echo "Installing APK on Android emulator..."
-	@if ! command -v adb >/dev/null 2>&1; then \
-		echo "Error: ADB not found. Install Android SDK or platform-tools."; \
-		exit 1; \
-	fi
-	@if ! adb devices | grep -q "emulator"; then \
-		echo "Error: No Android emulator running."; \
-		echo "Run 'make android-emulator-start' first."; \
-		exit 1; \
-	fi
-	@apk_path="fyne-cross/dist/android-arm64/dist.apk"; \
-	if [ -f "$$apk_path" ]; then \
-		echo "Installing $$apk_path..."; \
-		adb install -r "$$apk_path"; \
-		echo "Installation completed!"; \
-	else \
-		echo "Error: APK not found. Run 'make android-emulator-build' first."; \
-		exit 1; \
-	fi
-
-.PHONY: android-emulator-reinstall
-android-emulator-reinstall: android-emulator-build ## Reinstall APK on Android emulator (uninstall + install)
-	@echo "Reinstalling APK on Android emulator..."
-	@if ! command -v adb >/dev/null 2>&1; then \
-		echo "Error: ADB not found. Install Android SDK or platform-tools."; \
-		exit 1; \
-	fi
-	@if ! adb devices | grep -q "emulator"; then \
-		echo "Error: No Android emulator running."; \
-		echo "Run 'make android-emulator-start' first."; \
-		exit 1; \
-	fi
-	@echo "Uninstalling current app..."; \
-	adb uninstall $(APP_ID) 2>/dev/null || echo "App not installed or already removed"; \
-	@apk_path="fyne-cross/dist/android-arm64/dist.apk"; \
-	if [ -f "$$apk_path" ]; then \
-		echo "Installing $$apk_path..."; \
-		adb install "$$apk_path"; \
-		echo "Reinstallation completed!"; \
-	else \
-		echo "Error: APK not found. Run 'make android-emulator-build' first."; \
-		exit 1; \
-	fi
-
-.PHONY: android-emulator-logs
-android-emulator-logs: ## View logs from Android emulator
-	@echo "Viewing logs from Android emulator..."
-	@echo "Press Ctrl+C to stop monitoring"
-	@if ! command -v adb >/dev/null 2>&1; then \
-		echo "Error: ADB not found. Install Android SDK or platform-tools."; \
-		exit 1; \
-	fi
-	@if ! adb devices | grep -q "emulator"; then \
-		echo "Error: No Android emulator running."; \
-		echo "Run 'make android-emulator-start' first."; \
-		exit 1; \
-	fi
-	@adb logcat | grep -E "(com.github.ytget.ytdownloader|ytdlp|Download|Error|Exception|Fatal)"
-
-.PHONY: android-emulator-stop
-android-emulator-stop: ## Stop Android emulator
-	@echo "Stopping Android emulator..."
-	@adb emu kill
-	@echo "Emulator stopped"
-
-##@ Aliases
-
-.PHONY: r
-r: ## Run app
-	@make run
-
-.PHONY: t
-t: ## Run tests
-	@make test
-
-.PHONY: l
-l: ## Run linter (golangci-lint)
-	@make lint
-
-.PHONY: f
-f: ## Format code
-	@make format
-
-.PHONY: b
-b: ## Build binary
-	@make build
-
-.PHONY: i
-i: ## Install binary
-	@make install
-
-.PHONY: c
-c: ## Clean artifacts
-	@make clean
-
-.PHONY: macos
-macos: ## Build macOS app
-	@make macos-build
-
-.PHONY: install-macos
-install-macos: ## Install macOS app
-	@make macos-install
-
-.PHONY: dmg
-dmg: ## Create DMG installer
-	@make macos-dmg
+clean-all: clean ## Deep clean dependencies and caches
+	rm -rf frontend/node_modules
+	go clean -cache
+	@echo "Deep cleaned"

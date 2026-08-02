@@ -1,18 +1,34 @@
+# Deprecated: there is no supported headless CLI build of the Wails GUI app.
+#
+# Historical formula kept so taps that still reference it can surface a clear error.
+# Install the desktop app via the GUI cask instead:
+#   brew tap ytget/yt-downloader
+#   brew install --cask yt-downloader
 class YtDownloaderCli < Formula
-  desc "Lightweight cross-platform desktop app to download YouTube videos and playlists"
+  desc "DEPRECATED — use the yt-downloader cask for the desktop GUI"
   homepage "https://github.com/ytget/yt-downloader"
-  url "https://github.com/ytget/yt-downloader/archive/v0.1.0.tar.gz"
-  sha256 "08a308b5fefd50bc30c512f1fea195e551bf015479abf99d4f0ec236cbb3f149"
+  url "https://github.com/ytget/yt-downloader/archive/refs/tags/v1.0.0.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
-  head "https://github.com/ytget/yt-downloader.git", branch: "main"
 
-  depends_on "go" => :build
+  deprecate! date: "2026-08-02", because: "the project ships a Wails desktop GUI only; install the cask yt-downloader"
 
   def install
-    system "go", "build", "-ldflags", "-X main.version=#{version}", "-o", bin/"yt-downloader", "main.go"
+    odie <<~EOS
+      yt-downloader-cli is deprecated.
+
+      This project is a Wails desktop application (not a standalone CLI).
+      Install the GUI instead:
+
+        brew tap ytget/yt-downloader
+        brew install --cask yt-downloader
+
+      Or download a release from:
+        https://github.com/ytget/yt-downloader/releases
+    EOS
   end
 
   test do
-    assert_match "yt-downloader", shell_output("#{bin}/yt-downloader --help", 1)
+    false
   end
 end
