@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/ytget/yt-downloader/internal/model"
 	"github.com/ytget/yt-downloader/internal/platform"
-	"github.com/ytget/ytdlp/types"
 	"github.com/ytget/ytdlp/v2"
+	"github.com/ytget/ytdlp/v2/types"
 )
 
 // min returns the minimum of two integers
@@ -315,8 +315,8 @@ func (s *Service) GetAllTasks() []*model.DownloadTask {
 	return tasks
 }
 
-// GetTaskByVideoID returns a task by extracted YouTube video ID from its URL
-// This is useful for playlist UI rows which use the plain YouTube ID as row identifier
+// GetTaskByVideoID returns a task by extracted video ID from its URL
+// This is useful for playlist UI rows which use the plain video ID as row identifier
 func (s *Service) GetTaskByVideoID(videoID string) (*model.DownloadTask, bool) {
 	s.tasksMutex.RLock()
 	defer s.tasksMutex.RUnlock()
@@ -555,7 +555,7 @@ func (s *Service) startTask(task *model.DownloadTask) {
 
 		s.tasksMutex.Lock()
 		task.Status = model.TaskStatusError
-		task.LastError = s.parseYouTubeError(resErr)
+		task.LastError = s.parseVideoError(resErr)
 		task.FinishedAt = time.Now()
 		s.tasksMutex.Unlock()
 		s.notifyUpdate(task)
@@ -623,7 +623,7 @@ func (s *Service) startTask(task *model.DownloadTask) {
 			delete(s.stopModes, task.ID)
 		} else {
 			task.Status = model.TaskStatusError
-			task.LastError = s.parseYouTubeError(err)
+			task.LastError = s.parseVideoError(err)
 		}
 	} else {
 		task.Status = model.TaskStatusCompleted
@@ -774,9 +774,9 @@ func generateTaskID() string {
 	return "task-" + id.String()
 }
 
-// extractVideoID extracts video ID from various YouTube URL formats
+// extractVideoID extracts video ID from various URL formats
 func (s *Service) extractVideoID(url string) string {
-	// Simple extraction for common YouTube URL patterns
+	// Simple extraction for common URL patterns
 	if strings.Contains(url, "youtube.com/watch?v=") {
 		parts := strings.Split(url, "v=")
 		if len(parts) > 1 {
@@ -784,7 +784,7 @@ func (s *Service) extractVideoID(url string) string {
 			// Clean video ID from any additional parameters
 			videoID = strings.Split(videoID, "#")[0]
 			videoID = strings.Split(videoID, "/")[0]
-			if len(videoID) == 11 { // YouTube video IDs are 11 characters
+			if len(videoID) == 11 { // Video IDs are typically 11 characters
 				return videoID
 			}
 		}
@@ -880,8 +880,8 @@ func (s *Service) sanitizeFilename(filename string) string {
 	return result
 }
 
-// parseYouTubeError converts YouTube-specific errors to user-friendly messages
-func (s *Service) parseYouTubeError(err error) string {
+// parseVideoError converts video-specific errors to user-friendly messages
+func (s *Service) parseVideoError(err error) string {
 	if err == nil {
 		return ""
 	}

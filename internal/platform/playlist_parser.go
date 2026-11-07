@@ -28,7 +28,7 @@ const (
 	TitleTruncateSuffix  = "..."
 )
 
-// PlaylistParserService handles parsing of YouTube playlists
+// PlaylistParserService handles parsing of video playlists
 type PlaylistParserService struct {
 	timeout time.Duration
 }
@@ -40,7 +40,7 @@ func NewPlaylistParserService() *PlaylistParserService {
 	}
 }
 
-// ParsePlaylist parses a YouTube playlist URL and returns playlist information
+// ParsePlaylist parses a video playlist URL and returns playlist information
 func (p *PlaylistParserService) ParsePlaylist(ctx context.Context, url string) (*model.Playlist, error) {
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
@@ -90,19 +90,19 @@ func (p *PlaylistParserService) ParsePlaylist(ctx context.Context, url string) (
 	return playlist, nil
 }
 
-// isValidPlaylistURL checks if the URL is a valid YouTube playlist URL
+// isValidPlaylistURL checks if the URL is a valid video playlist URL
 func (p *PlaylistParserService) isValidPlaylistURL(url string) bool {
 	// Check for playlist parameter in URL
 	return strings.Contains(url, PlaylistURLParam)
 }
 
-// extractPlaylistID extracts the playlist ID from a YouTube playlist URL
+// extractPlaylistID extracts the playlist ID from a video playlist URL
 func (p *PlaylistParserService) extractPlaylistID(url string) (string, error) {
 	// Extract playlist ID from URL
 	// Support various formats:
-	// - https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&start_radio=1
-	// - https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID
-	// - https://www.youtube.com/playlist?list=PLAYLIST_ID
+	// - https://example.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&start_radio=1
+	// - https://example.com/watch?v=VIDEO_ID&list=PLAYLIST_ID
+	// - https://example.com/playlist?list=PLAYLIST_ID
 
 	// Find list parameter
 	if !strings.Contains(url, PlaylistURLParam) {

@@ -9,7 +9,7 @@
 [![GitHub issues](https://img.shields.io/github/issues/ytget/yt-downloader)](https://github.com/ytget/yt-downloader/issues)
 [![GitHub stars](https://img.shields.io/github/stars/ytget/yt-downloader?style=social)](https://github.com/ytget/yt-downloader/stargazers)
 
-Lightweight cross‑platform desktop app to download YouTube videos and playlists with a clean Fyne UI and robust native Go integration.
+Lightweight cross‑platform desktop app to download videos and playlists with a clean Fyne UI and robust native Go integration.
 
 <div align="center">
     <img src="./yt-downloader.png" alt="yt-downloader" width="250" height="250" />
@@ -51,10 +51,10 @@ Lightweight cross‑platform desktop app to download YouTube videos and playlist
 - [License](#license)
 
 ### What is this?
-yt-downloader is a GUI application written in Go using the Fyne toolkit. It downloads single videos and entire playlists from YouTube, shows live progress, and stores files in your Downloads folder by default.
+yt-downloader is a GUI application written in Go using the Fyne toolkit. It downloads single videos and entire playlists from various video platforms, shows live progress, and stores files in your Downloads folder by default.
 
 ### Purpose
-- Provide a simple, reliable, cross‑platform YouTube downloader with a friendly UI.
+- Provide a simple, reliable, cross‑platform video downloader with a friendly UI.
 - Handle large playlists quickly using native Go parsing.
 - Offer sensible defaults with options for power users (quality presets, filename template, parallelism, language, auto-reveal on complete).
 
@@ -179,7 +179,7 @@ make build
 make run
 ```
 
-3) Paste a YouTube URL (single video or a playlist with `list=`) and press Download.
+3) Paste a video URL (single video or a playlist) and press Download.
 
 ### Usage
 - Single video: paste the video URL and click Download.
@@ -319,10 +319,9 @@ We welcome community contributions. Please follow the guidelines below.
   - Be respectful. Friendly, focused collaboration is appreciated.
 
 ### Acknowledgements
-- `github.com/ytget/ytdlp` — native Go YouTube download engine.
+- `github.com/ytget/ytdlp` — native Go video download engine.
 - `Fyne` — cross‑platform UI.
 - Pure Go implementation for maximum compatibility.
-- Inspiration from [`youtube-dl`](https://github.com/ytdl-org/youtube-dl) project and its excellent documentation structure.
 
 ### License
 MIT License
